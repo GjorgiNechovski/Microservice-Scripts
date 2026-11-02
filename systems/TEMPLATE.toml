@@ -1,0 +1,202 @@
+# =============================================================================
+# TEMPLATE  --  copy this file to systems/<your-system>.toml and fill it in.
+#
+# You ONLY list names and which components each operation needs.
+# All MODEL numbers (failure rates, request rates, replica counts, ...) are
+# MEASURED for you by the analyzer -- do not put model numbers in this file.
+#
+# Then run:  python3 -m analyzer.run_all systems/<your-system>.toml
+# =============================================================================
+
+name = "My system"
+
+# --- Place your services here (just the names). ------------------------------
+services = [
+    # "my-first-service",
+    # "my-second-service",
+]
+
+# --- Place your shared infrastructure here (gateway, databases, brokers). ----
+infrastructure = [
+    # "api-gateway",
+    # "database",
+]
+
+# --- Operations you care about, and the components each one needs. -----------
+[operations]
+# checkout = ["api-gateway", "my-first-service", "database"]
+
+
+# =============================================================================
+# OPTIONAL: failure_rate estimates (reliability, Layer 2).
+#
+# repair_rate is MEASURED for you (Phase 2 kills a container and times recovery).
+# failure_rate -- how often a component fails ON ITS OWN -- cannot be measured
+# before launch (there's no runtime history yet). Once the system runs in
+# production, measure it from restart/OOM history:
+#     python3 -m analyzer.collect systems/<your-system>.toml --failures
+#
+# But for PRE-PRODUCTION analysis, put your own estimates here and they take
+# precedence over everything else. Value = failures per HOUR = 1 / MTTF_hours
+# (MTTF = mean time to failure). E.g. "fails about once a month" = 1/720 ~ 0.0014.
+# Omit this section to fall back to observed history (or a flagged default).
+# =============================================================================
+# [failure_rates]
+# default = 0.001            # applies to any component not listed below (~42-day MTTF)
+# database = 0.0002          # more reliable  (~208-day MTTF)
+# my-first-service = 0.0015  # less reliable  (~28-day MTTF)
+
+
+# =============================================================================
+# OPTIONAL: automated load generation (Phase 1 -- collection).
+#
+# Arrival rate (lambda) and utilization (rho) only EXIST while traffic flows,
+# so they must be measured under load. If you point the analyzer at a load
+# script, it will run it and measure during it:
+#
+#     python3 -m analyzer.collect systems/<your-system>.toml --run-load --write
+#
+# YOU MUST PROVIDE YOUR OWN k6 SCRIPT.  A generic tool cannot ship a universal
+# one -- your endpoints, payloads and authentication are specific to your app.
+# (See https://k6.io -- the script just describes the requests a user makes.)
+#
+# Leave this whole [load] section out to drive traffic manually instead (run
+# your own load however you like, then run the collector without --run-load).
+# =============================================================================
+# [load]
+# script = "path/to/your-load-test.js"   # REQUIRED for --run-load: your k6 script
+#   A relative path is read from THIS file's directory, not from wherever you
+#   run the command, so the spec and its script can live in your own project.
+#
+# The overrides below are OPTIONAL. If you omit them, your script's own
+# options/stages run unchanged ("default parameters"). Provide them only to
+# override your script from here:
+# vus = 50            # constant virtual users (a single run)
+# duration = "5m"     # how long to hold that load
+# stages = [           # OR a ramping profile (takes precedence over vus/duration)
+#   { duration = "1m", target = 100 },
+#   { duration = "3m", target = 100 },
+#   { duration = "1m", target = 0 },
+# ]
+#
+# vus may be a LIST instead of a number -> a LOAD SWEEP. The analyzer runs the
+# load at each level, writes a full analysis per level (analysis/load-<N>/) and
+# a final analysis/scaling-report.txt comparing them (bottleneck, highest safe
+# load, replicas each service needs). 'duration' is the hold time per level.
+# A sweep is STRONGLY preferred over a single run: only by watching throughput
+# across levels can the analyzer recover a trustworthy service rate for a
+# service that saturates (see service_rate_effective below).
+# vus = [50, 100, 200, 500]
+# duration = "3m"
+#
+# --- Reaching your app from the k6 container --------------------------------
+# By default k6 runs with --network host, so the script can hit the app at
+# localhost:<port>. That works on LINUX only. On WINDOWS and macOS (Docker
+# Desktop) there is no host networking: set docker_network to your compose
+# network and have the script target a SERVICE NAME instead of localhost.
+#
+# Find the network name with:  docker network ls
+# Pin it in your compose file so it is stable:
+#     networks:
+#       backend:
+#         name: my-app-backend
+#
+# docker_network = "my-app-backend"
+#
+# --- Passing values into the k6 script (__ENV) ------------------------------
+# 'env' sets literal values. Use it for the base URL, so the same script works
+# on Linux (localhost) and Docker Desktop (service DNS) without editing it:
+#     const BASE_URL = __ENV.BASE_URL || 'http://localhost:8000';
+# env = { BASE_URL = "http://api-gateway:8000" }
+#
+# 'env_passthrough' forwards variables from YOUR shell into the k6 container
+# when they are set. This is where SECRETS belong (tokens, passwords): they
+# stay out of this tracked file. Values found in the environment win over 'env'.
+# You may also put them in a git-ignored .env file at the repo root; the
+# analyzer loads it at startup, and real environment variables still override.
+# env_passthrough = ["AUTH_TOKEN", "TEST_PASSWORD"]
+
+
+# =============================================================================
+# OPTIONAL: capacity-sizing target (replica recommendation).
+#
+# The analyzer computes the SMALLEST replica count per service that keeps its
+# M/M/c queue at or below this utilization -- pure math from the measured
+# arrival/service rates, no redeploying. In a load sweep it does this per level,
+# so you see how many replicas each service needs as traffic grows. Optionally
+# add a response-time budget (ms) to also cap latency.
+# =============================================================================
+# [capacity]
+# target_utilization = 0.7    # default if omitted
+# max_response_ms = 500       # optional latency budget
+
+
+# =============================================================================
+# OPTIONAL: scale-out vs optimize thresholds.
+#
+# For an OVERLOADED service the analyzer says whether to add replicas or make
+# the request itself cheaper. The discriminator is per-request service time
+# S = 1/mu: a HEAVY request means another replica only buys you mu more req/s,
+# so the fix is optimization (pagination, an index, caching); a CHEAP request
+# that is merely swamped scales out fine.
+#
+# "Heavy" is relative to your own system:
+#     S >= max(heavy_floor_ms, heavy_factor * median S across services)
+# Raise heavy_floor_ms if your workload is legitimately slow everywhere.
+# =============================================================================
+# [diagnose]
+# heavy_floor_ms = 40         # default: below this, never called "heavy"
+# heavy_factor = 2.0          # default: this many times the median service time
+
+
+# =============================================================================
+# WHAT THE ANALYZER NEEDS TO SEE (metrics prerequisites)
+#
+# Every number is measured from Prometheus. You need THREE things scraped; the
+# analyzer resolves the exact metric names itself (it never hard-codes one), so
+# versions and vendors do not matter -- but the families must be present.
+# Check what it found with:
+#     python3 -m analyzer.collect systems/<your-system>.toml --discover
+#
+#  1. REQUEST COUNT + SERVICE TIME, per service. Either works:
+#     * an API gateway that exports per-upstream request counts and latency
+#       histograms (e.g. Kong's prometheus plugin), or
+#     * per-service OpenTelemetry HTTP-server metrics
+#       (http.server.request.duration), exported via an OTel collector whose
+#       Prometheus endpoint is scraped. Use this when there is no gateway.
+#     -> gives arrival rate (lambda) and service rate (mu).
+#
+#  2. cAdvisor, for per-container CPU and the replica count (c). It counts
+#     distinct containers per docker-compose service label, so this assumes a
+#     docker-compose deployment.
+#
+#  3. The service NAMES in the metric labels must match the names in this file.
+#     The analyzer tries 'service', 'service_name', 'exported_job' and 'job'
+#     and keeps whichever overlaps your list -- but if your services are named
+#     differently in telemetry than here, --discover will report them missing.
+#
+# Anything it cannot measure is reported as unmeasured. The analyzer never
+# invents a number to fill a gap.
+# =============================================================================
+
+
+# =============================================================================
+# A NOTE ON THE MEASURED FILE (systems/<your-system>.measured.toml)
+#
+# AUTO-GENERATED -- never edit it by hand. Two service-rate fields appear there
+# and the difference matters when you read a report:
+#
+#   service_rate            mu estimated as 1 / mean-latency. Only trustworthy
+#                           while the service is NOT saturated: mean latency
+#                           includes QUEUE time, so under load this collapses
+#                           and makes the service look far weaker than it is.
+#   service_rate_effective  mu recovered from the throughput plateau during a
+#                           load sweep. Under saturation every replica is
+#                           always busy, so completed-request throughput is
+#                           c * mu -- departures are not inflated by queueing,
+#                           only latency is. This is the trustworthy one, and
+#                           the analysis prefers it whenever it is present.
+#
+# This is why a load SWEEP beats a single run: without watching throughput
+# across levels there is no way to tell a saturated service from a slow one.
+# =============================================================================

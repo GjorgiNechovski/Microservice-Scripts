@@ -1,0 +1,23 @@
+# A COMPLETELY DIFFERENT application, to show the analyzer is generic.
+# Same as any user's file: only names + operations, no numbers.
+# Run:  python3 -m analyzer.run_all systems/example-shop.toml
+
+name = "Example e-commerce shop"
+
+services = [
+    "web-frontend",
+    "cart-service",
+    "payment-service",
+    "inventory-service",
+]
+
+infrastructure = [
+    "nginx-gateway",
+    "orders-db",
+    "redis-cache",
+    "kafka",
+]
+
+[operations]
+checkout       = ["nginx-gateway", "cart-service", "payment-service", "inventory-service", "orders-db", "kafka"]
+browse_catalog = ["nginx-gateway", "inventory-service", "redis-cache"]

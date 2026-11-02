@@ -1,0 +1,119 @@
+# =============================================================================
+# Observability stack for the analyzer -- a STANDALONE compose project.
+#
+# It does not overlay your app's compose file. It joins the docker network
+# your app already runs on (APP_NETWORK, declared external below), so every
+# path in this file resolves inside this directory no matter where your app
+# lives. Your app needs no changes to be scraped by cAdvisor; anything it
+# exposes on that network (a gateway's /metrics, OTLP exports) is reachable by
+# service name in both directions.
+#
+#   1. start your app first (it creates the network)
+#   2. cp observability/.env.example observability/.env   and fill it in
+#   3. docker compose -f observability/docker-compose.observability.yaml up -d
+#
+# Tear down with the same file and `down`; your app is left untouched.
+# =============================================================================
+
+name: microservice-observability
+
+services:
+  # --- Metrics store ---------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Per-system scrape jobs (e.g. your API gateway). prometheus.yml loads
+      # every *.yml in here; point SCRAPE_DIR at your system's folder.
+      - ${SCRAPE_DIR:-./prometheus/scrape.d}:/etc/prometheus/scrape.d:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - app
+
+  # --- Dashboards ------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - app
+    depends_on:
+      - prometheus
+
+  # --- Telemetry fan-out: metrics -> Prometheus, traces -> Honeycomb ---------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    command: ["--config=/etc/otel/config.yaml"]
+    env_file:
+      - ./.env
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus exporter (scraped by Prometheus)
+    networks:
+      - app
+
+  # --- Per-container resource metrics (language-agnostic) --------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    privileged: true
+    # Without these flags cAdvisor walks every container's filesystem to compute
+    # disk usage, which took 7+ seconds PER CONTAINER on a ~40-container host and
+    # made Prometheus scrapes time out under load. That silently breaks the
+    # measurement: the collector reads replica counts from container_last_seen,
+    # so a scrape gap makes services look like they have 1 replica. Only
+    # cpu/memory and container liveness are used, so everything costly is off.
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      - --max_housekeeping_interval=15s
+      - --disable_metrics=disk,diskIO,tcp,udp,percpu,sched,process,hugetlb,referenced_memory,cpu_topology,resctrl,advtcp,memory_numa,cpuset
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - app
+
+  # --- eBPF auto-instrumentation: per-service RED metrics + traces, zero code -
+  beyla:
+    image: grafana/beyla:latest
+    # Without an init to reap its children Beyla goes zombie on stop and blocks
+    # every `down` until the container is force-removed.
+    init: true
+    restart: unless-stopped
+    pid: "host"
+    privileged: true
+    environment:
+      BEYLA_OPEN_PORT: "${BEYLA_OPEN_PORT:-8000-8090}"
+      BEYLA_SERVICE_NAMESPACE: "${BEYLA_SERVICE_NAMESPACE:-app}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+    depends_on:
+      - otel-collector
+    networks:
+      - app
+
+networks:
+  app:
+    external: true
+    name: ${APP_NETWORK:?set APP_NETWORK in observability/.env to the docker network your app runs on (docker network ls)}

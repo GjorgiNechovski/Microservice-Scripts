@@ -1,0 +1,111 @@
+# =============================================================================
+# YOUR SYSTEM  --  this is the ONLY file you edit.
+#
+# You list your services, your shared infrastructure, and the operations you
+# care about. That is all. Every NUMBER (how often things fail, how fast they
+# recover, request rates, service times, replica counts) is MEASURED
+# AUTOMATICALLY by the analyzer from your running system -- you never type those.
+#
+# Run:  python3 -m analyzer systems/finki-blogger.toml
+#       (full pipeline: load sweep + fault injection + analysis; see
+#        systems/finki-blogger/README.md for bringing the system up first)
+# =============================================================================
+
+name = "FINKI blogging platform"
+
+# --- Place your services (application tiers) here. Just the names. -----------
+services = [
+    "user-service",
+    "blog-service",
+    "comment-service",
+    "like-service",
+    "email-service",
+]
+
+# --- Shared single-instance infrastructure (gateways, databases, brokers). ---
+infrastructure = [
+    "kong",
+    "blogging-db",
+    "user-db",
+    "zookeeper",
+    "rabbitmq",
+]
+
+# --- Instances per infrastructure component (default 1). ----------------------
+# Declared, not measured: a shared component can sit behind a load balancer.
+[instances]
+kong = 2
+blogging-db = 2
+user-db = 2
+rabbitmq = 2
+
+# --- OPTIONAL: container name mapping for failure injection (Phase 2). --------
+# Only needed when an abstract component name differs from its docker-compose
+# service name. Here everything matches except the gateway ("kong" is the
+# compose service "api-gateway"). Omit this table if all your names match.
+[containers]
+kong = "api-gateway"
+
+# --- OPTIONAL: readiness ports for failure injection (Phase 2). ---------------
+# For components WITHOUT a docker healthcheck, "recovered" means this TCP port
+# accepts connections again (i.e. the app is serving), not merely that the
+# container is running. kong/api-gateway, blogging-db and user-db have docker
+# healthchecks, so they don't need an entry -- recovery waits for 'healthy'.
+[readiness]
+user-service = 8080     # .NET (Kestrel) listens on 8080
+blog-service = 8000     # Python/uvicorn
+comment-service = 8000
+like-service = 8000
+email-service = 8080    # Spring/Tomcat listens on 8080
+zookeeper = 2181
+rabbitmq = 5672
+
+# --- Operations you care about: which components each one needs to work. -----
+[operations]
+post_a_blog       = ["kong", "blog-service", "blogging-db", "zookeeper"]
+read_a_blog       = ["kong", "blog-service", "blogging-db", "zookeeper"]
+register_or_login = ["kong", "user-service", "user-db", "zookeeper"]
+like_a_blog       = ["kong", "like-service", "blogging-db", "rabbitmq", "zookeeper"]
+
+# --- OPTIONAL: failure_rate estimates (per hour = 1/MTTF_hours). --------------
+# repair_rate is measured (Phase 2). failure_rate can't be observed before the
+# system has real runtime, so these are PRE-PRODUCTION ESTIMATES, each derived
+# from a plausible mean-time-to-failure. Replace with measured history later:
+#     python3 -m analyzer.collect systems/finki-blogger.toml --failures
+# These take precedence over measured/placeholder values in the analysis.
+[failure_rates]
+default     = 0.001     # 5 app services: ~1000 h MTTF (~42 days) -- stateless, occasional crash/OOM under load
+blogging-db = 0.0002    # ~5000 h MTTF (~208 days) -- Postgres, very stable
+user-db     = 0.0002    # ~5000 h MTTF (~208 days)
+kong        = 0.0005    # ~2000 h MTTF (~83 days)  -- mature gateway
+zookeeper   = 0.0007    # ~1430 h MTTF (~60 days)  -- coordination service, more sensitive
+rabbitmq    = 0.0006    # ~1670 h MTTF (~70 days)  -- message broker
+
+# --- OPTIONAL: automated load for Phase-1 measurement of lambda / rho. --------
+# arrival rate + utilization only exist while traffic flows, so the analyzer
+# can run a load script and measure during it:
+#     python3 -m analyzer.collect systems/finki-blogger.toml --run-load --write
+# The k6 script is YOURS to provide (it is specific to these endpoints + auth).
+# Omit [load] to drive traffic manually instead.
+#
+# vus can be a SINGLE number (one run) or a LIST -> a LOAD SWEEP: the analyzer
+# runs the load at each level, writes a full analysis per level
+# (analysis/load-<N>/), and a final analysis/scaling-report.txt comparing them
+# (bottleneck, highest safe load, replicas each service needs per level).
+[load]
+script = "finki-blogger/load.js"   # relative to THIS file's directory
+vus = [50, 100, 200, 500]   # sweep these levels; a single number runs once
+duration = "3m"             # how long to hold each level
+# --- Windows/macOS: k6 cannot use --network host there. Uncomment these two
+# lines so k6 joins the compose network and targets Kong by service DNS
+# (the script reads BLOG_BASE_URL; the network name is pinned in the compose):
+# docker_network = "finki-blogger-backend"
+# env = { BLOG_BASE_URL = "http://api-gateway:8000" }
+
+# --- OPTIONAL: capacity-sizing target for the replica recommendation. ---------
+# The analyzer computes the SMALLEST replica count per service that keeps its
+# M/M/c queue under this utilization (pure math -- no redeploying). Add an
+# optional response-time budget in ms to also cap latency.
+[capacity]
+target_utilization = 0.7
+# max_response_ms = 500

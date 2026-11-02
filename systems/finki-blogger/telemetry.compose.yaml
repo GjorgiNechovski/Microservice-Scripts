@@ -1,0 +1,70 @@
+# =============================================================================
+# Telemetry wiring for the FINKI blogging platform.
+#
+# An overlay on FINKI-blogger-2's OWN compose file, so the stack in
+# observability/ can measure it. It only sets environment variables -- no
+# paths -- which is why it works from wherever you keep this repository:
+#
+#   cd FINKI-blogger-2
+#   docker compose -f docker-compose.yaml \
+#       -f ../Microservice-Scripts/systems/finki-blogger/telemetry.compose.yaml up -d
+#
+# No service code changes: the Kong plugins already live in the app's kong.yml
+# and the OTel instrumentation is already baked into the images. These
+# variables only switch the export on.
+# =============================================================================
+
+services:
+  # Kong: expose the admin API (where the Prometheus plugin serves /metrics)
+  # and turn on tracing for the OpenTelemetry plugin.
+  api-gateway:
+    environment:
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_TRACING_INSTRUMENTATIONS: "all"
+      KONG_TRACING_SAMPLING_RATE: "1.0"
+
+  # Point each instrumented service at the collector (traces -> Honeycomb).
+  blog-service:
+    environment:
+      - OTEL_SERVICE_NAME=blog-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+
+  comment-service:
+    environment:
+      - OTEL_SERVICE_NAME=comment-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+
+  like-service:
+    environment:
+      - OTEL_SERVICE_NAME=like-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+
+  user-service:
+    environment:
+      - OTEL_SERVICE_NAME=user-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+
+  email-service:
+    environment:
+      - OTEL_SERVICE_NAME=email-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none

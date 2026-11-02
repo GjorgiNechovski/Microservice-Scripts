@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets (Honeycomb API key etc.) -- never commit
+observability/.env
+.env
+
+# Analyzer output: regenerate with `python3 -m analyzer <spec>`
+/analysis/
+/figures/
+
+# Internal working notes (just for me + Claude, not deliverable)
+progress/
+analyzer/docs/
+
+# finki example: internal note on its per-service instrumentation
+systems/finki-blogger/INSTRUMENTATION.md

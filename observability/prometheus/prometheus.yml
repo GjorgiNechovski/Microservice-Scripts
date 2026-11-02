@@ -1,0 +1,39 @@
+# Prometheus scrape configuration for the analyzer's observability stack.
+# Every target is reached over the app's docker network (APP_NETWORK), which
+# the stack joins as an external network.
+#
+# Only what EVERY system has lives here. Anything specific to one system --
+# above all its API gateway, the cleanest source of per-service arrival rate
+# and latency -- goes in its own file under scrape.d/ (see SCRAPE_DIR in
+# .env.example), which this file pulls in at the bottom.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus scraping itself.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Per-container CPU / memory / network for EVERY service (language-agnostic).
+  # Feeds Layer-1 utilization and helps detect failures/restarts.
+  - job_name: cadvisor
+    # cAdvisor is slower than the default 10s timeout allows once there are
+    # ~40 containers on the host. A timed-out scrape is not a cosmetic gap:
+    # replica counts come from container_last_seen, so a miss makes a service
+    # look like it has one replica and silently corrupts the analysis.
+    scrape_timeout: 14s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # Metrics forwarded by the OpenTelemetry Collector (this brings in Beyla's
+  # eBPF-derived RED metrics, and whatever your services export over OTLP).
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+# Per-system jobs. Each file holds its own `scrape_configs:` list; job names
+# must be unique across this file and all of them.
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml

@@ -1,0 +1,50 @@
+# OpenTelemetry Collector configuration.
+#
+# The collector is the single fan-out point of the observability stack:
+#   * it RECEIVES telemetry over OTLP (from Beyla's eBPF probes, from the Kong
+#     OpenTelemetry plugin, and from any per-service OTel auto-instrument agents);
+#   * it EXPORTS metrics to Prometheus (scraped at :8889) and
+#     traces to Honeycomb (distributed tracing backend).
+#
+# The Honeycomb API key is read from the environment (HONEYCOMB_API_KEY), which
+# is injected from observability/.env -- it never lives in this file or in git.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  # Metrics -> Prometheus (Prometheus scrapes this endpoint).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Traces -> Honeycomb over OTLP/gRPC.
+  otlp/honeycomb:
+    endpoint: api.honeycomb.io:443
+    headers:
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+
+  # Console output for local debugging (safe to remove).
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/honeycomb, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

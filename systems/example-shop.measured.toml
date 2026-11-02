@@ -1,0 +1,46 @@
+# AUTO-GENERATED MEASUREMENTS -- DO NOT EDIT BY HAND. (Placeholder values until
+# the measurement phases exist; then this file is produced from the running app.)
+
+[services.web-frontend]
+replicas = 4
+failure_rate = 0.03
+repair_rate = 20.0
+arrival_rate = 200.0
+service_rate = 80.0
+
+[services.cart-service]
+replicas = 2
+failure_rate = 0.04
+repair_rate = 15.0
+arrival_rate = 60.0
+service_rate = 50.0
+
+[services.payment-service]
+replicas = 2
+failure_rate = 0.06
+repair_rate = 10.0
+arrival_rate = 25.0
+service_rate = 30.0
+
+[services.inventory-service]
+replicas = 3
+failure_rate = 0.02
+repair_rate = 18.0
+arrival_rate = 90.0
+service_rate = 60.0
+
+[infrastructure.nginx-gateway]
+failure_rate = 0.015
+repair_rate = 20.0
+
+[infrastructure.orders-db]
+failure_rate = 0.008
+repair_rate = 8.0
+
+[infrastructure.redis-cache]
+failure_rate = 0.02
+repair_rate = 30.0
+
+[infrastructure.kafka]
+failure_rate = 0.01
+repair_rate = 12.0

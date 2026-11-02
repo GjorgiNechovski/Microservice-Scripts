@@ -1,0 +1,19 @@
+# FINKI blogging platform: its Kong gateway. Loaded by the observability stack
+# when observability/.env has  SCRAPE_DIR=../systems/finki-blogger/prometheus
+scrape_configs:
+  # Kong gateway metrics (per-route request rate, latency, status codes) from
+  # the Kong Prometheus plugin, served on the admin API. Because all traffic
+  # flows through Kong, this alone gives per-service arrival rate + latency.
+  #
+  # The gateway runs MORE THAN ONE instance, and each keeps its own counters.
+  # A static target would resolve to a single replica and under-report the
+  # arrival rate by whatever share the others served, so the instances are
+  # discovered through docker's DNS (one A record each) and scraped
+  # individually. The collector already aggregates with `sum by (service)`,
+  # which adds the per-instance series back together.
+  - job_name: kong
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["api-gateway"]
+        type: A
+        port: 8001

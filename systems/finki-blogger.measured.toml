@@ -1,0 +1,68 @@
+# ===========================================================================
+# AUTO-GENERATED MEASUREMENTS  --  DO NOT EDIT BY HAND.
+#
+# Reliability numbers (repair_rate) were MEASURED by failure injection
+# (kill a container, time recovery) by Phase 2 at 2026-09-21 18:59 UTC.
+# failure_rate is observed from restart history where any restarts have
+# occurred, else preserved as a prior/assumption. Performance numbers
+# (replicas/arrival_rate/service_rate) are preserved from Phase 1.
+#
+#   failure_rate / repair_rate : per hour   (reliability, Layer 2)
+#   arrival_rate / service_rate: per second (performance, Layer 1)
+#   service_rate_effective     : per second, preserved from the sweep
+# ===========================================================================
+
+[services.user-service]
+replicas = 3
+failure_rate = 0.02
+repair_rate = 511.6241
+arrival_rate = 0.0
+service_rate = 11.5314
+
+[services.blog-service]
+replicas = 3
+failure_rate = 0.03
+repair_rate = 970.6153
+arrival_rate = 34.3677
+service_rate = 0.0488
+
+[services.comment-service]
+replicas = 3
+failure_rate = 0.02
+repair_rate = 995.5889
+arrival_rate = 4.0531
+service_rate = 75.4107
+
+[services.like-service]
+replicas = 3
+failure_rate = 0.02
+repair_rate = 987.0309
+arrival_rate = 12.1076
+service_rate = 45.2576
+
+[services.email-service]
+replicas = 3
+failure_rate = 0.05
+repair_rate = 293.7394
+arrival_rate = 4.0
+service_rate = 20.0
+
+[infrastructure.kong]
+failure_rate = 0.02
+repair_rate = 337.3024
+
+[infrastructure.blogging-db]
+failure_rate = 0.005
+repair_rate = 657.25
+
+[infrastructure.user-db]
+failure_rate = 0.005
+repair_rate = 661.2497
+
+[infrastructure.zookeeper]
+failure_rate = 0.01
+repair_rate = 3551.7633
+
+[infrastructure.rabbitmq]
+failure_rate = 0.01
+repair_rate = 587.4359

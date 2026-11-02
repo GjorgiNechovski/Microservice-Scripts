@@ -1,0 +1,12 @@
+# Auto-load any dashboard JSON placed in /var/lib/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: analyzer
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
