@@ -53,18 +53,26 @@ python3 -m analyzer.run_all systems/finki-blogger.toml
 1. **Describe it.** Copy `systems/TEMPLATE.toml` and list your services, your
    shared infrastructure, and which components each user operation needs. Names
    only, no numbers. The spec can live anywhere, including your own project.
-2. **Write a k6 load script** for your endpoints (optional, but arrival rate and
+2. **Make per-service request metrics available.** The analyzer needs a request
+   counter and a latency histogram for every service, labelled with the
+   service's compose name. Either a gateway exports them per upstream (add a
+   scrape job, as the FINKI example does for Kong), or each service exports its
+   own OpenTelemetry HTTP metrics with `OTEL_SERVICE_NAME` set to its compose
+   name. Most apps need the second; [CLAUDE.md](CLAUDE.md) has a verified
+   recipe. Beyla, although it is in the stack, can't be relied on for this.
+3. **Write a k6 load script** for your endpoints (optional, but arrival rate and
    utilization only exist while traffic flows). Point `[load].script` at it; a
    relative path is read from the spec's own directory.
-3. **Start your app**, then **start the observability stack** on its network.
+4. **Start your app**, then **start the observability stack** on its network.
    See [observability/README.md](observability/README.md): set `APP_NETWORK`
-   in `observability/.env`, and `SCRAPE_DIR` if you have a gateway worth
-   scraping.
-4. **Check what can be measured:**
+   in `observability/.env`, and `SCRAPE_DIR` if you have a gateway job.
+5. **Check what can be measured:**
    ```bash
    python3 -m analyzer.collect path/to/your-system.toml --discover
    ```
-5. **Run it:**
+   Every service should be listed with traffic. Give it a minute of traffic
+   before the first measurement.
+6. **Run it:**
    ```bash
    python3 -m analyzer path/to/your-system.toml
    ```
@@ -93,8 +101,15 @@ shows what would happen first.
 ## Tests
 
 ```bash
-python3 -m pytest analyzer/tests/ -q
+python3 -m analyzer.tests          # the whole suite, no pytest needed
 ```
 
-Each test module also runs on a bare interpreter, e.g.
-`python3 -m analyzer.tests.test_queueing`.
+It also runs under pytest (`python3 -m pytest analyzer/tests/ -q`), and each
+module on its own, e.g. `python3 -m analyzer.tests.test_queueing`.
+
+## Handing this to an AI agent
+
+[CLAUDE.md](CLAUDE.md) is written for that: what the agent may run without
+asking (the bare `python3 -m analyzer <spec>` stops containers), how to get
+metrics out of a system it has never seen, what to check before believing any
+number, and which questions only you can answer.

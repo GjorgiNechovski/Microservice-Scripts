@@ -14,7 +14,7 @@ leaves your app untouched.
 | **Grafana** | dashboards (Prometheus datasource pre-provisioned) | 3000 |
 | **OTel Collector** | fan-out: metrics → Prometheus, traces → **Honeycomb** | 4317/4318/8889 |
 | **cAdvisor** | per-container CPU, memory and replica counts, for every service | 8080 |
-| **Beyla (eBPF)** | per-service request rate and latency + traces, with zero code | — |
+| **Beyla (eBPF)** | zero-code traces, where the kernel allows it; **not** a usable source of per-service metrics (see caveats) | — |
 
 Two telemetry halves: **metrics** (Prometheus/Grafana) feed the models;
 **traces** (Honeycomb) give per-request, cross-service visibility.
@@ -75,9 +75,14 @@ does.
 
 ## Notes and caveats (read before debugging)
 
-- **Beyla** needs `privileged` + host PID and a recent kernel with eBPF. If it
-  can't attach, check its container logs; `BEYLA_OPEN_PORT` (default
-  `8000-8090`) selects which listening ports it instruments.
+- **Don't count on Beyla for the analyzer.** It needs `privileged` + host PID,
+  and on newer kernels the `:latest` image fails to load eBPF at all (its log
+  says `Unable to load eBPF ... BTF`). Where it does run, it names services
+  after their process (`nginx`, `python3`), which never matches a spec. The
+  analyzer's per-service request metrics have to come from a gateway job or
+  from the services' own OpenTelemetry instrumentation; see step 2 of
+  [CLAUDE.md](../CLAUDE.md). `BEYLA_OPEN_PORT` (default `8000-8090`) selects
+  which listening ports it instruments.
 - **cAdvisor** runs with its expensive collectors switched off. Leave them off:
   on a host with ~40 containers its disk-usage scans made scrapes time out, and
   a missed scrape makes services look like they have one replica.

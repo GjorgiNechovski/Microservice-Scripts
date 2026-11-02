@@ -349,10 +349,19 @@ def measure(prom: Prometheus, spec: dict, window: str = "5m") -> list[Measuremen
 
         if m.replicas is None:
             m.notes.append("replicas not measured (no cAdvisor series)")
+        # A rate needs at least two scrapes of a counter, so a service whose
+        # metrics appeared seconds ago reads as unmeasured even though
+        # --discover already lists it. Say so: otherwise the two outputs
+        # contradict each other with no hint of why.
         if m.arrival_rate is None:
-            m.notes.append("lambda not measured (no traffic metrics seen)")
+            m.notes.append(
+                f"lambda not measured (no request rate in the last {window}; "
+                "if --discover lists this service with traffic, its counters "
+                "are too new -- drive traffic for a minute and retry, "
+                "otherwise its telemetry name does not match the spec)")
         if m.service_rate is None:
-            m.notes.append("mu not measured (no service-time samples)")
+            m.notes.append(f"mu not measured (no service-time samples in the "
+                           f"last {window})")
 
         if m.arrival_rate is not None and m.service_rate and m.replicas:
             m.utilization = m.arrival_rate / (m.replicas * m.service_rate)

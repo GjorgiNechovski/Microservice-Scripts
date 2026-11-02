@@ -1,16 +1,25 @@
 # =============================================================================
-# TEMPLATE  --  copy this file to systems/<your-system>.toml and fill it in.
+# TEMPLATE  --  copy this file and fill it in. It can live in this repo's
+# systems/ or in your own project; relative paths in it are read from its own
+# directory, and the measured values are written next to it.
 #
 # You ONLY list names and which components each operation needs.
 # All MODEL numbers (failure rates, request rates, replica counts, ...) are
 # MEASURED for you by the analyzer -- do not put model numbers in this file.
 #
-# Then run:  python3 -m analyzer.run_all systems/<your-system>.toml
+# Next, see what can be measured (read-only, safe):
+#     python3 -m analyzer.collect <your-system>.toml --discover
+# Don't start with `analyzer.run_all`: until something has been measured it
+# falls back to placeholder numbers, and its report would describe nothing real.
+# README.md and CLAUDE.md walk through the whole sequence.
 # =============================================================================
 
 name = "My system"
 
 # --- Place your services here (just the names). ------------------------------
+# Use each service's compose service name (or map it under [containers]). The
+# request metrics must carry the same name in their service label -- for
+# OpenTelemetry that means OTEL_SERVICE_NAME -- or --discover won't find them.
 services = [
     # "my-first-service",
     # "my-second-service",
