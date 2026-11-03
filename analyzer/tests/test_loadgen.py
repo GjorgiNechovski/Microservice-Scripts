@@ -15,6 +15,7 @@ import tempfile
 from analyzer.collect.loadgen import (
     build_command,
     load_config,
+    measurement_window,
     resolve_script,
     sweep_levels,
     _stage_flags,
@@ -221,6 +222,13 @@ def test_build_command_custom_network_and_overrides():
     assert cmd[cmd.index("--network") + 1] == "backend"
     # override stages appear before the script argument
     assert "--stage" in cmd and cmd[-1] == "s.js"
+
+
+def test_measurement_window_matches_the_run():
+    # a 2m50s level read over "3m" took in 10 s of whatever came before it
+    assert measurement_window(174.2) == "175s"
+    assert measurement_window(185.0) == "185s"
+    assert measurement_window(3.0) == "60s"       # still spans several scrapes
 
 
 def _run_all() -> int:

@@ -83,6 +83,10 @@ does.
   from the services' own OpenTelemetry instrumentation; see step 2 of
   [CLAUDE.md](../CLAUDE.md). `BEYLA_OPEN_PORT` (default `8000-8090`) selects
   which listening ports it instruments.
+- **cAdvisor** sees every container on the host. The analyzer counts a
+  service's replicas by compose service name, scoped to `compose_project` when
+  the spec sets it, and ignores containers not seen in the last minute (cAdvisor
+  keeps reporting removed ones for a while).
 - **cAdvisor** runs with its expensive collectors switched off. Leave them off:
   on a host with ~40 containers its disk-usage scans made scrapes time out, and
   a missed scrape makes services look like they have one replica.

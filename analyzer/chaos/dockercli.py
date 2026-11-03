@@ -6,8 +6,9 @@ Uses ``subprocess`` against the ``docker`` CLI (no SDK dependency); the command
 runner is injectable so tests can run without Docker.
 
 Containers are located by the standard compose label
-``com.docker.compose.service`` -- no project name assumptions, so it works on
-any compose project.
+``com.docker.compose.service``, optionally narrowed to one
+``com.docker.compose.project`` -- so it works on any compose project, and two
+projects that both have a ``redis`` can be told apart.
 """
 
 from __future__ import annotations
@@ -80,14 +81,27 @@ class Docker:
                 continue
         return False
 
-    def containers_for(self, compose_service: str) -> list:
-        """Container names for a compose service (running or not), sorted."""
+    def containers_for(self, compose_service: str,
+                       project: str | None = None) -> list:
+        """Container names for a compose service (running or not), sorted.
+
+        ``project`` limits the match to one compose project; without it, every
+        project on the host that has a service of that name matches.
+        """
+        filters = ["--filter", f"label=com.docker.compose.service={compose_service}"]
+        if project:
+            filters += ["--filter", f"label=com.docker.compose.project={project}"]
+        out = self._run(["ps", "-a", *filters, "--format", "{{.Names}}"])
+        return sorted(n for n in out.splitlines() if n.strip())
+
+    def projects_for(self, compose_service: str) -> set:
+        """The compose projects that have a container for this service."""
         out = self._run([
             "ps", "-a",
             "--filter", f"label=com.docker.compose.service={compose_service}",
-            "--format", "{{.Names}}",
+            "--format", '{{.Label "com.docker.compose.project"}}',
         ])
-        return sorted(n for n in out.splitlines() if n.strip())
+        return {p.strip() for p in out.splitlines() if p.strip()}
 
     def container_ips(self, name: str) -> list:
         """The container's IP address(es) across its networks."""

@@ -28,6 +28,7 @@ from analyzer.collect.collector import (
     render_measured_toml,
 )
 from analyzer.collect.promql import Sample
+from analyzer.spec import unmeasured_recovery
 
 REL = 1e-9
 
@@ -53,6 +54,7 @@ class FakePrometheus:
         return sorted(self._label_values.get(label, []))
 
     def instant(self, query):
+        self.queries = getattr(self, "queries", []) + [query]
         for substr, samples in self._rules:
             if substr in query:
                 return samples
@@ -483,6 +485,42 @@ def test_promql_instant_parses_and_skips_nan():
     assert len(samples) == 1                      # NaN row skipped
     assert samples[0].labels["service"] == "blog-service"
     assert _close(samples[0].value, 30.0)
+
+
+def test_render_marks_placeholder_repair_rates():
+    # Phase 1 never measures recovery. With nothing earlier to carry forward,
+    # each repair rate is a fallback and must be marked, or a --skip-chaos run
+    # reports placeholder availability as measured.
+    rows = measure(_kong_and_cadvisor_prom(), _SPEC)
+    fresh = tomllib.loads(render_measured_toml(_SPEC, rows, existing=None))
+    assert unmeasured_recovery(_SPEC, fresh) == (_SPEC["services"]
+                                                 + _SPEC["infrastructure"])
+    existing = {
+        "services": {"blog-service": {"replicas": 1, "failure_rate": 0.03,
+                                      "repair_rate": 500.0, "arrival_rate": 1.0,
+                                      "service_rate": 1.0}},
+        "infrastructure": {"kong": {"failure_rate": 0.02, "repair_rate": 12.0,
+                                    "repair_rate_measured": False}},
+    }
+    merged = tomllib.loads(render_measured_toml(_SPEC, rows, existing))
+    left = unmeasured_recovery(_SPEC, merged)
+    assert "blog-service" not in left          # measured earlier, stays measured
+    assert "kong" in left                      # the mark is carried forward
+
+
+def test_container_queries_scope_to_compose_project_and_drop_stale():
+    prom = _kong_and_cadvisor_prom()
+    measure(prom, {**_SPEC, "compose_project": "shop"})
+    cadvisor = [q for q in prom.queries if "container_" in q]
+    assert cadvisor and all(
+        'container_label_com_docker_compose_project="shop"' in q
+        for q in cadvisor)
+    seen = [q for q in cadvisor if "container_last_seen" in q]
+    assert seen and "> time() - 60" in seen[0]   # removed containers drop out
+
+    prom = _kong_and_cadvisor_prom()
+    measure(prom, _SPEC)                         # no project: unscoped, as before
+    assert not any("compose_project" in q for q in prom.queries)
 
 
 def _run_all() -> int:

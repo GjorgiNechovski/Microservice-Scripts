@@ -15,7 +15,8 @@ from __future__ import annotations
 import math
 import sys
 
-from analyzer.spec import analyze, load_or_default_measurements, load_system
+from analyzer.spec import (analyze, load_or_default_measurements, load_system,
+                           unmeasured_recovery)
 
 _MIN_YR = 365 * 24 * 60
 
@@ -42,9 +43,15 @@ def _rule(title: str) -> None:
     print("=" * 74)
 
 
-def report(results: dict, measured_from: str) -> None:
+def report(results: dict, measured_from: str, unmeasured=()) -> None:
     print(f"\nANALYSIS REPORT -- {results['name']}")
     print(f"measurements: {measured_from}")
+    if unmeasured:
+        print(f"WARNING: recovery NOT measured for {', '.join(unmeasured)}: their "
+              "repair rates are")
+        print("         placeholders (fault injection did not time them), so the "
+              "Layer 2-4")
+        print("         availability figures below are illustrations, not results.")
 
     # ---- Layer 1: performance -------------------------------------------
     _rule("Layer 1 -- Performance (M/M/c per service)")
@@ -109,7 +116,8 @@ def main(argv: list) -> int:
               f"          Using placeholder defaults so the analysis can run.\n"
               f"          The measurement phase will generate real numbers.",
               file=sys.stderr)
-    report(analyze(spec, measurements), measured_from=source)
+    report(analyze(spec, measurements), measured_from=source,
+           unmeasured=unmeasured_recovery(spec, measurements))
     return 0
 
 

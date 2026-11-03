@@ -55,9 +55,30 @@ def component_to_service(spec: dict) -> dict:
     return {comp: overrides.get(comp, comp) for comp in components}
 
 
+def containers_of(spec: dict, docker: Docker, compose_service: str) -> list:
+    """This system's containers for one compose service.
+
+    Scoped to the spec's ``compose_project`` when it sets one. Without it, a
+    service name that two compose projects on the host share would match both,
+    and fault injection would stop the other project's container; that case is
+    refused rather than guessed.
+    """
+    project = spec.get("compose_project")
+    if project:
+        return docker.containers_for(compose_service, project=project)
+    projects = docker.projects_for(compose_service)
+    if len(projects) > 1:
+        raise DockerError(
+            f"compose service '{compose_service}' has containers in "
+            f"{len(projects)} compose projects ({', '.join(sorted(projects))}); "
+            "set compose_project in the spec so only this system's containers "
+            "are touched (find it with `docker compose ls`)")
+    return docker.containers_for(compose_service)
+
+
 def resolve_containers(spec: dict, docker: Docker) -> dict:
     """component -> [container names] for everything in the spec."""
-    return {comp: docker.containers_for(svc)
+    return {comp: containers_of(spec, docker, svc)
             for comp, svc in component_to_service(spec).items()}
 
 
@@ -87,7 +108,7 @@ def plan(spec: dict, docker: Docker) -> list:
     plans = []
     for comp, svc in component_to_service(spec).items():
         try:
-            containers = docker.containers_for(svc)
+            containers = containers_of(spec, docker, svc)
         except DockerError as exc:
             plans.append(ComponentPlan(comp, svc, [], 0, "?", False, True,
                                        note=f"docker error: {exc}"))
@@ -365,7 +386,7 @@ def verify_recovered(docker: Docker, spec: dict, timeout: float = 60.0,
     report = RecoveryReport()
     for comp, svc in component_to_service(spec).items():
         try:
-            containers = docker.containers_for(svc)
+            containers = containers_of(spec, docker, svc)
         except DockerError:
             containers = []
         if not containers:
@@ -395,6 +416,13 @@ def _measured_repair(res: MttrResult | None, prev: dict) -> float:
     if res and res.repair_rate_per_hour:
         return res.repair_rate_per_hour
     return prev.get("repair_rate", _FALLBACK_REPAIR)
+
+
+def _repair_placeholder(res: MttrResult | None, prev: dict) -> bool:
+    """True when this pass did not time the component and nothing earlier did."""
+    if res and res.repair_rate_per_hour:
+        return False
+    return "repair_rate" not in prev or prev.get("repair_rate_measured") is False
 
 
 def _measured_failure(res: MttrResult | None, prev: dict) -> float:
@@ -432,6 +460,7 @@ def render_measured_toml(spec: dict, results: dict,
         "# failure_rate is observed from restart history where any restarts have",
         "# occurred, else preserved as a prior/assumption. Performance numbers",
         "# (replicas/arrival_rate/service_rate) are preserved from Phase 1.",
+        "# A component it could not time keeps repair_rate_measured = false.",
         "#",
         "#   failure_rate / repair_rate : per hour   (reliability, Layer 2)",
         "#   arrival_rate / service_rate: per second (performance, Layer 1)",
@@ -447,6 +476,8 @@ def render_measured_toml(spec: dict, results: dict,
         lines.append(f"replicas = {int(prev.get('replicas', _FALLBACK_REPLICAS))}")
         lines.append(f"failure_rate = {_fmt(_measured_failure(res, prev))}")
         lines.append(f"repair_rate = {_fmt(_measured_repair(res, prev))}")
+        if _repair_placeholder(res, prev):
+            lines.append("repair_rate_measured = false")
         lines.append(f"arrival_rate = "
                      f"{_fmt(float(prev.get('arrival_rate', _FALLBACK_ARRIVAL)))}")
         lines.append(f"service_rate = "
@@ -462,6 +493,8 @@ def render_measured_toml(spec: dict, results: dict,
         lines.append(f"[infrastructure.{name}]")
         lines.append(f"failure_rate = {_fmt(_measured_failure(res, prev))}")
         lines.append(f"repair_rate = {_fmt(_measured_repair(res, prev))}")
+        if _repair_placeholder(res, prev):
+            lines.append("repair_rate_measured = false")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

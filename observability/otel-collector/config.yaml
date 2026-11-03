@@ -34,9 +34,11 @@ exporters:
     headers:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
 
-  # Console output for local debugging (safe to remove).
+  # Console output for local debugging (safe to remove). "basic" logs one line
+  # per batch; "normal" logs every span and filled ~3 million log lines in 25
+  # minutes of load testing.
   debug:
-    verbosity: normal
+    verbosity: basic
 
 service:
   pipelines:

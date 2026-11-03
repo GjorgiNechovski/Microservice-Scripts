@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from analyzer.capacity import min_replicas
+from analyzer.models.queueing import _STABILITY_EPS
 
 
 @dataclass
@@ -56,12 +57,27 @@ class LoadCapacity:
 
 
 def _rows(levels, name):
+    """(vus, lam, latency mu, rho, stable) per level, rho from the LATENCY mu.
+
+    Saturation is judged on the mu measured at each level, never on the
+    ``service_rate_effective`` the results may already have been analysed with:
+    that rate is ``X_peak / c`` itself, so it puts the top level at rho = 1 by
+    construction, and its 4-decimal rounding decides which side of 1 it lands
+    (0.99999978 once silently un-saturated a service and swapped its clean
+    throughput rate for a latency one).
+    """
     rows = []
     for lv in sorted(levels, key=lambda x: x.vus):
         p = lv.measurements["services"][name]
-        q = lv.results["services"][name].queue
-        rows.append((lv.vus, float(p["arrival_rate"]),
-                     float(p["service_rate"]), q.rho, q.stable))
+        lam, mu = float(p["arrival_rate"]), float(p["service_rate"])
+        c = int(p["replicas"])
+        if lam == 0.0:
+            rho = 0.0
+        elif mu > 0 and c > 0:
+            rho = lam / (c * mu)
+        else:
+            rho = float("inf")
+        rows.append((lv.vus, lam, mu, rho, rho < 1.0 - _STABILITY_EPS))
     return rows
 
 

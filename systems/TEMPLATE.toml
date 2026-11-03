@@ -31,9 +31,44 @@ infrastructure = [
     # "database",
 ]
 
+# --- Your compose project (strongly recommended). ----------------------------
+# Containers are found by their compose service name. If another compose
+# project on this machine also has, say, a "redis", it would be counted as one
+# of your replicas, and fault injection refuses to run until you set this.
+# Find the name with `docker compose ls` (by default, your app's directory name).
+# compose_project = "my-app"
+
 # --- Operations you care about, and the components each one needs. -----------
+# This drives every availability figure: an operation is "up" only while ALL
+# of its components are. Draft it from the code, then confirm it with whoever
+# owns the system.
 [operations]
 # checkout = ["api-gateway", "my-first-service", "database"]
+
+
+# =============================================================================
+# OPTIONAL: names, readiness and redundancy.
+# =============================================================================
+# [containers]
+#   Only where a component's name above differs from its compose service name.
+# api-gateway = "kong"
+#
+# [readiness]
+#   For fault injection. A component with a docker healthcheck counts as
+#   recovered when it is "healthy". One without counts as recovered when this
+#   TCP port accepts connections again. Read the port from the Dockerfile CMD:
+#   uvicorn defaults to 8000, .NET Kestrel and Spring to 8080. A port opening
+#   is not the same as "working again" for a stateful component (a cache that
+#   restarts empty, say); add a healthcheck to those if you can.
+# my-first-service = 8000
+# database = 5432
+#
+# [instances]
+#   Infrastructure that genuinely runs more than one instance WITH failover
+#   (a database replica set, a broker cluster). Service replica counts are
+#   measured, never declared here. Declaring redundancy that does not exist
+#   makes every availability figure fiction.
+# database = 2
 
 
 # =============================================================================
@@ -95,6 +130,12 @@ infrastructure = [
 # A sweep is STRONGLY preferred over a single run: only by watching throughput
 # across levels can the analyzer recover a trustworthy service rate for a
 # service that saturates (see service_rate_effective below).
+#
+# Choosing the levels: the useful ones bracket the point where throughput stops
+# rising. Find it first with a few short single runs (say 1, 2, 5, 20 VUs for a
+# minute each) and compare the request rates. Without think-time a small app
+# can level off below 5 VUs; FINKI's 50-500 suit FINKI only. Each level should
+# hold for at least two minutes.
 # vus = [50, 100, 200, 500]
 # duration = "3m"
 #
@@ -170,14 +211,17 @@ infrastructure = [
 #  1. REQUEST COUNT + SERVICE TIME, per service. Either works:
 #     * an API gateway that exports per-upstream request counts and latency
 #       histograms (e.g. Kong's prometheus plugin), or
-#     * per-service OpenTelemetry HTTP-server metrics
-#       (http.server.request.duration), exported via an OTel collector whose
-#       Prometheus endpoint is scraped. Use this when there is no gateway.
+#     * per-service OpenTelemetry HTTP-server metrics, exported to the stack's
+#       OTel collector (the Python SDK names them
+#       http_server_duration_milliseconds_*, newer SDKs
+#       http_server_request_duration_seconds_*; both are recognised). Use this
+#       when there is no metrics-exporting gateway. Recipe: CLAUDE.md, step 2.
 #     -> gives arrival rate (lambda) and service rate (mu).
 #
 #  2. cAdvisor, for per-container CPU and the replica count (c). It counts
-#     distinct containers per docker-compose service label, so this assumes a
-#     docker-compose deployment.
+#     distinct containers per docker-compose service label (within
+#     compose_project, if set), so this assumes a docker-compose deployment.
+#     A removed container stops counting about a minute after it goes.
 #
 #  3. The service NAMES in the metric labels must match the names in this file.
 #     The analyzer tries 'service', 'service_name', 'exported_job' and 'job'
@@ -190,10 +234,18 @@ infrastructure = [
 
 
 # =============================================================================
-# A NOTE ON THE MEASURED FILE (systems/<your-system>.measured.toml)
+# A NOTE ON THE MEASURED FILE (<your-system>.measured.toml, next to this file)
 #
-# AUTO-GENERATED -- never edit it by hand. Two service-rate fields appear there
-# and the difference matters when you read a report:
+# AUTO-GENERATED -- never edit it by hand. A single run and fault injection
+# write it; a load SWEEP writes one per level instead, as
+# analysis/load-<N>/measured.toml. `run_all` and `--no-measure` read only the
+# file next to the spec, so to re-analyse one sweep level, copy its file there.
+#
+# repair_rate_measured = false marks a recovery time that fault injection has
+# not measured (a placeholder); the reports then say so.
+#
+# Two service-rate fields appear there and the difference matters when you
+# read a report:
 #
 #   service_rate            mu estimated as 1 / mean-latency. Only trustworthy
 #                           while the service is NOT saturated: mean latency

@@ -13,6 +13,10 @@
 
 name = "FINKI blogging platform"
 
+# The compose project (`docker compose ls`): only its containers are counted
+# and, during fault injection, stopped.
+compose_project = "finki-blogger-2"
+
 # --- Place your services (application tiers) here. Just the names. -----------
 services = [
     "user-service",

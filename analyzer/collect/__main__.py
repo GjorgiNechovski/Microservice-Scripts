@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 
@@ -155,7 +154,7 @@ def main(argv=None) -> int:
             print(f"[load] running k6 script '{cfg['script']}' -- this blocks "
                   "until the load finishes...")
             run = loadgen.run_load(cfg, project_dir=os.getcwd())
-            window = f"{max(1, math.ceil(run.seconds / 60))}m"
+            window = loadgen.measurement_window(run.seconds)
             print(f"[load] k6 finished in {run.seconds:.0f}s "
                   f"({'ok' if run.ok else f'exit {run.returncode}'}); "
                   f"measuring over the last {window}.")

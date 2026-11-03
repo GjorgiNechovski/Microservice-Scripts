@@ -64,6 +64,12 @@ _CADVISOR_MARKERS = ("container_last_seen", "container_cpu_usage_seconds_total")
 # Failure-history metrics (cAdvisor): a restart changes the start time; an OOM
 # kill is an unambiguous crash. Both are generic to any container.
 _START_TIME_METRIC = "container_start_time_seconds"
+_PROJECT_LABEL = "container_label_com_docker_compose_project"
+# cAdvisor stamps container_last_seen with the time it last saw the container,
+# and keeps exporting a removed one for a while (its samples carry their own
+# timestamps, so Prometheus never marks them stale). A replica counts only if
+# it was seen this recently; 60 s spans several 15 s scrapes.
+_SEEN_WITHIN_S = 60
 _OOM_METRIC = "container_oom_events_total"
 
 # Fallbacks used only when a value could not be measured, so the emitted file
@@ -177,6 +183,20 @@ def _window_hours(window: str) -> float:
         return 0.0
 
 
+def _container_selector(spec: dict) -> str:
+    """PromQL label matchers for this system's containers in cAdvisor series.
+
+    Every compose container on the host carries the service label; the spec's
+    ``compose_project`` narrows that to this system, so another project's
+    ``redis`` is not counted as one of its replicas.
+    """
+    sel = f'{_COMPOSE_LABEL}!=""'
+    project = spec.get("compose_project")
+    if project:
+        sel += f',{_PROJECT_LABEL}="{project}"'
+    return sel
+
+
 def _component_compose_map(spec: dict) -> dict:
     """component -> compose service, honoring the optional [containers] table."""
     overrides = spec.get("containers", {})
@@ -204,12 +224,12 @@ def measure_failure_rates(prom: Prometheus, spec: dict,
 
     restarts = _by_label(prom.instant(
         f"sum by ({_COMPOSE_LABEL})(changes({_START_TIME_METRIC}"
-        f'{{{_COMPOSE_LABEL}!=""}}[{window}]))'), _COMPOSE_LABEL)
+        f'{{{_container_selector(spec)}}}[{window}]))'), _COMPOSE_LABEL)
     ooms = {}
     if _OOM_METRIC in names:
         ooms = _by_label(prom.instant(
             f"sum by ({_COMPOSE_LABEL})(increase({_OOM_METRIC}"
-            f'{{{_COMPOSE_LABEL}!=""}}[{window}]))'), _COMPOSE_LABEL)
+            f'{{{_container_selector(spec)}}}[{window}]))'), _COMPOSE_LABEL)
 
     for comp, svc in _component_compose_map(spec).items():
         if svc not in restarts and svc not in ooms:
@@ -331,12 +351,13 @@ def measure(prom: Prometheus, spec: dict, window: str = "5m") -> list[Measuremen
     replicas: dict = {}
     cpu: dict = {}
     if has_cadvisor:
+        sel = _container_selector(spec)
         rq = (f"count by ({_COMPOSE_LABEL})(group by ({_COMPOSE_LABEL}, name)"
-              f'(container_last_seen{{{_COMPOSE_LABEL}!=""}}))')
+              f"(container_last_seen{{{sel}}} > time() - {_SEEN_WITHIN_S}))")
         replicas = {k: int(round(v))
                     for k, v in _by_label(prom.instant(rq), _COMPOSE_LABEL).items()}
         cq = (f"sum by ({_COMPOSE_LABEL})(rate("
-              f'container_cpu_usage_seconds_total{{{_COMPOSE_LABEL}!=""}}[{window}]))')
+              f"container_cpu_usage_seconds_total{{{sel}}}[{window}]))")
         cpu = _by_label(prom.instant(cq), _COMPOSE_LABEL)
 
     results: list[Measurement] = []
@@ -384,6 +405,11 @@ def _fmt(value: float) -> str:
     return repr(rounded)
 
 
+def _repair_placeholder(prev: dict) -> bool:
+    """True when the repair rate carried forward is a placeholder, not measured."""
+    return "repair_rate" not in prev or prev.get("repair_rate_measured") is False
+
+
 def render_measured_toml(spec: dict, measurements: list[Measurement],
                          existing: dict | None = None,
                          effective: dict | None = None,
@@ -422,7 +448,8 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
         "# Performance numbers (replicas, arrival_rate, service_rate) were MEASURED",
         f"# from the running system via Prometheus by Phase 1 (collection) at {stamp}.",
         "# failure_rate / repair_rate are preserved from Phase 2 (failure injection)",
-        "# or placeholders until it runs. Infrastructure rates are preserved as-is.",
+        "# or placeholders until it runs (marked repair_rate_measured = false).",
+        "# Infrastructure rates are preserved as-is.",
         "#",
         "#   failure_rate / repair_rate : per hour   (reliability, Layer 2)",
         "#   arrival_rate / service_rate: per second (performance, Layer 1)",
@@ -448,6 +475,8 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
         lines.append(f"replicas = {int(replicas)}")
         lines.append(f"failure_rate = {_fmt(float(failure))}")
         lines.append(f"repair_rate = {_fmt(float(repair))}")
+        if _repair_placeholder(prev):
+            lines.append("repair_rate_measured = false")
         lines.append(f"arrival_rate = {_fmt(float(arrival))}")
         lines.append(f"service_rate = {_fmt(float(service))}")
         eff = effective.get(m.name)
@@ -467,6 +496,8 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
         lines.append(f"[infrastructure.{name}]")
         lines.append(f"failure_rate = {_fmt(float(failure))}")
         lines.append(f"repair_rate = {_fmt(float(repair))}")
+        if _repair_placeholder(prev):
+            lines.append("repair_rate_measured = false")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

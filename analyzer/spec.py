@@ -35,8 +35,10 @@ _MINUTES_PER_YEAR = 365 * 24 * 60
 # measurement phases have run). Deliberately uniform so it is obvious they are
 # not real data.
 _DEFAULT_SERVICE = dict(replicas=1, failure_rate=0.02, repair_rate=12.0,
+                        repair_rate_measured=False,
                         arrival_rate=10.0, service_rate=50.0)
-_DEFAULT_INFRA = dict(failure_rate=0.02, repair_rate=12.0)
+_DEFAULT_INFRA = dict(failure_rate=0.02, repair_rate=12.0,
+                      repair_rate_measured=False)
 
 
 # --------------------------------------------------------------------------
@@ -63,6 +65,10 @@ def _validate_system(spec: dict) -> None:
                 raise ValueError(
                     f"operation '{op}' needs unknown component '{comp}' "
                     f"(add it to 'services' or 'infrastructure')")
+    project = spec.get("compose_project")
+    if project is not None and (not isinstance(project, str) or not project):
+        raise ValueError("compose_project must be the compose project name "
+                         "(a non-empty string; see `docker compose ls`)")
     infra = set(spec.get("infrastructure", []))
     for comp, n in spec.get("instances", {}).items():
         if comp not in infra:
@@ -106,6 +112,21 @@ def default_measurements(spec: dict) -> dict:
     for name in spec.get("infrastructure", []):
         m["infrastructure"][name] = dict(_DEFAULT_INFRA)
     return m
+
+
+def unmeasured_recovery(spec: dict, measurements: dict) -> list:
+    """Components whose repair rate is a placeholder, not a fault-injection result.
+
+    The measured file marks those with ``repair_rate_measured = false``; an
+    absent key means measured, so files written before the marker existed keep
+    their meaning.
+    """
+    ms = measurements.get("services", {})
+    mi = measurements.get("infrastructure", {})
+    return [n for n, sect in
+            [(s, ms.get(s, {})) for s in spec["services"]] +
+            [(i, mi.get(i, {})) for i in spec.get("infrastructure", [])]
+            if sect.get("repair_rate_measured") is False]
 
 
 def load_or_default_measurements(system_path: str, spec: dict):

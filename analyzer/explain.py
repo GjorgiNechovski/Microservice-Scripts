@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 import sys
 
-from analyzer.spec import analyze, load_or_default_measurements, load_system
+from analyzer.spec import (analyze, load_or_default_measurements, load_system,
+                           unmeasured_recovery)
 
 _MIN_YR = 365 * 24 * 60
 
@@ -68,6 +69,7 @@ def _recovery_phrase(seconds: float) -> str:
 def explain(results: dict, spec: dict, measurements: dict) -> str:
     out: list = []
     w = out.append
+    guessed = unmeasured_recovery(spec, measurements)
 
     w(f"PLAIN-LANGUAGE SUMMARY — {results['name']}")
     w("=" * 70)
@@ -81,6 +83,14 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     # -- headline, per operation ----------------------------------------
     w("THE HEADLINE")
     w("-" * 70)
+    if guessed:
+        every = set(spec["services"]) | set(spec.get("infrastructure", []))
+        if set(guessed) >= every:
+            w("Recovery was NOT measured (no part was stopped in this run), so the")
+        else:
+            w(f"Recovery was NOT measured for {', '.join(guessed)}, so the")
+        w("percentages below are illustrations, not results.")
+        w("")
     for op, t in results["top_events"].items():
         pct = t.availability * 100
         dt = (1.0 - t.availability) * _MIN_YR
@@ -164,8 +174,18 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     # -- recovery -------------------------------------------------------
     w("HOW FAST DOES IT RECOVER?")
     w("-" * 70)
-    w("We did not only calculate this — we actually stopped each part and timed")
-    w("how long it took to come back:")
+    every = set(spec["services"]) | set(infra)
+    if not guessed:
+        w("We did not only calculate this — we actually stopped each part and timed")
+        w("how long it took to come back:")
+    elif set(guessed) >= every:
+        w("NOT MEASURED. Nothing was stopped in this run (fault injection was")
+        w("skipped), so every time below is a stand-in, and so is every")
+        w("availability figure in this summary. Only a fault-injection run")
+        w("measures them.")
+    else:
+        w("We stopped each part and timed how long it took to come back, except")
+        w("those marked (not measured): their times are stand-ins.")
     w("")
     recover = []
     for name in spec["services"]:
@@ -175,11 +195,13 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
         rate = measurements["infrastructure"][name]["repair_rate"]
         recover.append((name, 3600.0 / rate))
     for name, secs in sorted(recover, key=lambda kv: kv[1], reverse=True):
-        w(f"  - {name}: back in {_recovery_phrase(secs)}")
+        tag = "  (not measured)" if name in guessed else ""
+        w(f"  - {name}: back in {_recovery_phrase(secs)}{tag}")
     w("")
-    w("  This quick recovery is WHY the system stays reliable despite the single")
-    w("  shared parts: even if one fails, it returns almost immediately.")
-    w("")
+    if not guessed:
+        w("  This quick recovery is WHY the system stays reliable despite the single")
+        w("  shared parts: even if one fails, it returns almost immediately.")
+        w("")
 
     # -- what to fix ----------------------------------------------------
     w("WHAT TO FIX FIRST")
@@ -201,10 +223,16 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
         w("     needs no fix right now.")
         w("")
         w("  2) RELIABILITY — the ranking below answers a different question:")
-    w("     if a part crashes at the rate we assumed and recovers as fast as we")
-    w("     measured, how much OUTAGE TIME per year would the change prevent?")
-    w("     These amounts look tiny precisely because recovery is fast — they")
-    w("     say nothing about how slow responses get under load.")
+    if not guessed:
+        w("     if a part crashes at the rate we assumed and recovers as fast as we")
+        w("     measured, how much OUTAGE TIME per year would the change prevent?")
+        w("     These amounts look tiny precisely because recovery is fast — they")
+        w("     say nothing about how slow responses get under load.")
+    else:
+        w("     if a part crashes at the rate we assumed and recovers as fast as")
+        w("     we ALSO assumed (recovery was not measured), how much OUTAGE TIME")
+        w("     per year would the change prevent? Treat the amounts as a ranking")
+        w("     only; they say nothing about how slow responses get under load.")
     w("")
     best_global = None
     for op, t in results["top_events"].items():

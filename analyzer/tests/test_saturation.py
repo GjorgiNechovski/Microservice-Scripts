@@ -62,6 +62,25 @@ def test_unsaturated_service_keeps_latency_mu():
     assert web.supported_vus is not None and web.supported_vus > 0
 
 
+def test_saturation_survives_effective_rate_rounding():
+    # The pipeline's second pass analyses each level WITH the recovered
+    # service_rate_effective, rounded to 4 decimals. 17.99995 / 3 rounds up to
+    # 6.0, so the top level reads rho = 0.9999972 -- just "stable". The verdict
+    # must still come from the latency mu, or db silently loses its plateau rate.
+    def lvl(v):
+        m = _level(v).measurements
+        db = dict(m["services"]["db"], arrival_rate=17.99995,
+                  service_rate_effective=6.0)
+        m = {**m, "services": {**m["services"], "db": db}}
+        return LevelResult(v, m, analyze(_SPEC, m), {})
+
+    levels = [lvl(v) for v in (50, 100, 200, 500)]
+    assert all(lv.results["services"]["db"].queue.stable for lv in levels)
+    db = estimate_capacity(levels, _SPEC, _TARGET)["db"]
+    assert db.saturated and db.method == "throughput-plateau"
+    assert abs(db.mu_clean - 17.99995 / 3) < 1e-9
+
+
 def test_system_supported_blocked_by_saturated_service():
     vus, who = system_supported(estimate_capacity(_LEVELS, _SPEC, _TARGET))
     assert vus is None and who == "db"

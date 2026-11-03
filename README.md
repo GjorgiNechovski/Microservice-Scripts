@@ -52,14 +52,18 @@ python3 -m analyzer.run_all systems/finki-blogger.toml
 
 1. **Describe it.** Copy `systems/TEMPLATE.toml` and list your services, your
    shared infrastructure, and which components each user operation needs. Names
-   only, no numbers. The spec can live anywhere, including your own project.
+   only, no numbers. Set `compose_project` to your compose project's name
+   (`docker compose ls`), so another app on the same machine is never counted
+   or stopped. The spec can live anywhere, including your own project.
 2. **Make per-service request metrics available.** The analyzer needs a request
    counter and a latency histogram for every service, labelled with the
    service's compose name. Either a gateway exports them per upstream (add a
    scrape job, as the FINKI example does for Kong), or each service exports its
    own OpenTelemetry HTTP metrics with `OTEL_SERVICE_NAME` set to its compose
    name. Most apps need the second; [CLAUDE.md](CLAUDE.md) has a verified
-   recipe. Beyla, although it is in the stack, can't be relied on for this.
+   recipe. Instrumentation costs capacity (tracing most of all), so the numbers
+   describe the instrumented build. Beyla, although it is in the stack, can't
+   be relied on for this.
 3. **Write a k6 load script** for your endpoints (optional, but arrival rate and
    utilization only exist while traffic flows). Point `[load].script` at it; a
    relative path is read from the spec's own directory.
@@ -72,12 +76,21 @@ python3 -m analyzer.run_all systems/finki-blogger.toml
    ```
    Every service should be listed with traffic. Give it a minute of traffic
    before the first measurement.
-6. **Run it:**
+6. **Run it**, load test only first:
+   ```bash
+   python3 -m analyzer path/to/your-system.toml --skip-chaos
+   ```
+   Then, once you have read the fault-injection plan
+   (`python3 -m analyzer.chaos path/to/your-system.toml`), the full pipeline,
+   which **stops containers** to time their recovery:
    ```bash
    python3 -m analyzer path/to/your-system.toml
    ```
-   Results go to `analysis/` (`--out` to change it), and the measured values
-   to `<your-system>.measured.toml` next to the spec.
+   Results go to `analysis/` (`--out` to change it). A single run writes the
+   measured values to `<your-system>.measured.toml` next to the spec; a sweep
+   writes one per level, as `analysis/load-<N>/measured.toml`, next to k6's
+   own summary. Until fault injection has run, recovery times are placeholders
+   and the reports say so.
 
 The FINKI example walks through all of this on a real system:
 [systems/finki-blogger/README.md](systems/finki-blogger/README.md).
@@ -86,7 +99,7 @@ The FINKI example walks through all of this on a real system:
 
 | Command | What it does |
 |---------|--------------|
-| `python3 -m analyzer <spec>` | full pipeline: load test, fault injection, analysis, report, figures |
+| `python3 -m analyzer <spec>` | full pipeline: load test, fault injection (**stops containers**), analysis, report, figures |
 | `python3 -m analyzer <spec> --no-measure` | analyse the existing measured values only |
 | `python3 -m analyzer <spec> --skip-chaos` | measure under load, but don't stop any containers |
 | `python3 -m analyzer.run_all <spec>` | the four analysis layers only, printed to the terminal |

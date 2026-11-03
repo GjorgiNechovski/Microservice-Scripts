@@ -21,7 +21,11 @@ import numpy as np               # noqa: E402
 
 from analyzer.models.ctmc import component_reliability  # noqa: E402
 from analyzer.models.queueing import mmc_metrics         # noqa: E402
-from analyzer.spec import analyze, failure_rate_for      # noqa: E402
+from analyzer.spec import (  # noqa: E402
+    analyze,
+    failure_rate_for,
+    unmeasured_recovery,
+)
 
 # Okabe-Ito: the established colour-blind-safe qualitative palette for print.
 _PALETTE = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7",
@@ -160,8 +164,10 @@ def fig_availability_vs_mttr(spec, measurements, outdir) -> str:
     ax.set_ylabel("availability  (nines)")
     ax.set_title("Layer 2 — availability vs recovery time (infrastructure)",
                  pad=12)
+    dots = ("dots = measured MTTR" if not unmeasured_recovery(spec, measurements)
+            else "dots = MTTR (placeholder where not measured)")
     leg = ax.legend(frameon=False, fontsize=8, labelcolor=_INK,
-                    title="dots = measured MTTR", title_fontsize=8)
+                    title=dots, title_fontsize=8)
     leg.get_title().set_color(_MUTED)
     return _save(fig, outdir, "layer2_availability_vs_mttr.png")
 
@@ -177,14 +183,29 @@ def fig_mttr_measured(spec, measurements, outdir) -> str:
     vals = [r[1] for r in rows]
     cols = [r[2] for r in rows]
 
+    guessed = set(unmeasured_recovery(spec, measurements))
+
     fig, ax = _ax(h=0.42 * len(names) + 1.2)
     y = np.arange(len(names))
-    ax.barh(y, vals, color=cols, height=0.68)
+    bars = ax.barh(y, vals, color=cols, height=0.68)
+    for bar, name in zip(bars, names):
+        if name in guessed:                       # a placeholder, not a result
+            bar.set_hatch("///")
+            bar.set_alpha(0.45)
     ax.set_yticks(y)
     ax.set_yticklabels(names, fontsize=8)
     ax.invert_yaxis()
-    ax.set_xlabel("measured MTTR  (seconds)")
-    ax.set_title("Measured recovery time per component (Phase 2 injection)")
+    if not guessed:
+        ax.set_xlabel("measured MTTR  (seconds)")
+        ax.set_title("Measured recovery time per component (Phase 2 injection)")
+    elif guessed >= set(names):
+        ax.set_xlabel("placeholder MTTR  (seconds)")
+        ax.set_title("Recovery time NOT MEASURED (fault injection not run): "
+                     "placeholders")
+    else:
+        ax.set_xlabel("MTTR  (seconds)")
+        ax.set_title("Recovery time per component (hatched = not measured, "
+                     "placeholder)")
     top = max(vals) if vals else 1.0
     for yi, v in zip(y, vals):
         ax.text(v + top * 0.01, yi, f"{v:.1f}s", va="center", fontsize=7.5,

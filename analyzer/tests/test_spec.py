@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import math
 
-from analyzer.spec import (_validate_system, analyze, failure_rate_for,
-                           infra_instances)
+from analyzer.spec import (_validate_system, analyze, default_measurements,
+                           failure_rate_for, infra_instances,
+                           unmeasured_recovery)
 
 
 def _close(a, b):
@@ -175,6 +176,27 @@ def test_redundancy_shrinks_the_gain_from_more_of_the_same():
     first = gain(None)["add 2nd gw"]
     second = gain({"gw": 2})["add 3rd gw"]
     assert first > second >= 0.0
+
+
+def test_unmeasured_recovery_flags_placeholders_only():
+    spec = {"name": "x", "services": ["svc"], "infrastructure": ["db"],
+            "operations": {}}
+    assert unmeasured_recovery(spec, default_measurements(spec)) == ["svc", "db"]
+    # a file without the marker (every file written before it existed) is measured
+    measured = {"services": {"svc": {"repair_rate": 100.0}},
+                "infrastructure": {"db": {"repair_rate": 50.0}}}
+    assert unmeasured_recovery(spec, measured) == []
+
+
+def test_compose_project_must_be_a_name():
+    base = {"services": ["svc"], "infrastructure": [], "operations": {}}
+    _validate_system({**base, "compose_project": "shop"})
+    for bad in ("", 3):
+        try:
+            _validate_system({**base, "compose_project": bad})
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted compose_project={bad!r}")
 
 
 def _run_all() -> int:

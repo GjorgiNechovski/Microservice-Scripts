@@ -91,6 +91,23 @@ def test_busy_phrase():
     assert "limit" in _busy_phrase(0.95, True)
 
 
+def test_unmeasured_recovery_is_never_called_measured():
+    spec, meas, res = _analyze()
+    meas["services"]["svc"]["repair_rate_measured"] = False
+    meas["infrastructure"]["db"]["repair_rate_measured"] = False
+    text = explain(res, spec, meas)
+    assert "actually stopped" not in text
+    assert "NOT MEASURED" in text
+    assert "illustrations, not results" in text
+
+    spec, meas, res = _analyze()
+    meas["infrastructure"]["db"]["repair_rate_measured"] = False
+    text = explain(res, spec, meas)
+    assert "actually stopped" not in text
+    assert re.search(r"db: back in .*\(not measured\)", text)
+    assert not re.search(r"svc: back in .*\(not measured\)", text)
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

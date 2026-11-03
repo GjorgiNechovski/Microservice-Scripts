@@ -16,6 +16,7 @@ own ``options.stages`` without k6's "duration and stages both set" conflict.
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -187,6 +188,16 @@ def build_command(cfg: dict, project_dir: str,
         *_stage_flags(cfg),
         target,
     ]
+
+
+def measurement_window(seconds: float) -> str:
+    """PromQL range covering a load run that just finished, in whole seconds.
+
+    Rounding up to whole minutes (as this once did) let a 2m50s level be read
+    over 3m, the extra 10 s being idle time or the previous level's traffic.
+    Never below a minute, so a rate still spans several scrapes.
+    """
+    return f"{max(60, math.ceil(seconds))}s"
 
 
 def run_load(cfg: dict, project_dir: str = ".", image: str = _K6_IMAGE,

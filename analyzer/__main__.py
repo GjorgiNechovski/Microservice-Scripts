@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
-import math
 import os
 import sys
 import tomllib
@@ -44,6 +43,7 @@ from analyzer.spec import (
     load_or_default_measurements,
     load_system,
     measurements_path,
+    unmeasured_recovery,
 )
 
 
@@ -68,9 +68,10 @@ def _phase1_collect(spec, spec_path, args) -> None:
         print(f"[collect] running load script '{cfg['script']}' "
               "(blocks until it finishes)...")
         run = loadgen.run_load(cfg, project_dir=os.getcwd())
-        window = f"{max(1, math.ceil(run.seconds / 60))}m"
+        window = loadgen.measurement_window(run.seconds)
         print(f"[collect] load done in {run.seconds:.0f}s; measuring over "
               f"the last {window}")
+        _save_k6_output(run, args.out)
     else:
         print("[collect] no [load] section; measuring current traffic")
 
@@ -99,7 +100,7 @@ def _phase2_chaos(spec, spec_path, args) -> None:
     try:
         containers = resolve_containers(spec, docker)
     except DockerError as exc:
-        print(f"[chaos] SKIPPED (Docker unavailable): {exc}", file=sys.stderr)
+        print(f"[chaos] SKIPPED: {exc}", file=sys.stderr)
         return
 
     results = {}
@@ -117,11 +118,11 @@ def _phase2_chaos(spec, spec_path, args) -> None:
 # report / figure rendering
 # ---------------------------------------------------------------------------
 
-def _render_report(results, source, capacity_text=None) -> str:
+def _render_report(results, source, capacity_text=None, unmeasured=()) -> str:
     """Render the analysis report to a string (optionally + a capacity block)."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        report(results, measured_from=source)
+        report(results, measured_from=source, unmeasured=unmeasured)
     text = buf.getvalue()
     if capacity_text:
         text += "\n" + capacity_text
@@ -186,6 +187,17 @@ def _verify_recovery(spec) -> bool:
 # load sweep
 # ---------------------------------------------------------------------------
 
+def _save_k6_output(run, outdir) -> None:
+    """Keep k6's own end-of-test summary next to the analysis it fed.
+
+    It is the only record of whether the load ran its full duration and how
+    many checks passed (a run of a few seconds means setup() failed).
+    """
+    os.makedirs(outdir, exist_ok=True)
+    path = _write(os.path.join(outdir, "k6-output.txt"), run.output)
+    print(f"[load]   k6 output: {path}")
+
+
 def _measure_level(spec, args, cfg, level, base_meas):
     """Run the load at one VU level, measure, and merge onto the shared rates.
 
@@ -209,8 +221,9 @@ def _measure_level(spec, args, cfg, level, base_meas):
             f"[sweep] ABORT: k6 exited with code {run.returncode} after "
             f"{run.seconds:.0f}s at {level} VUs -- no measurement taken.\n"
             f"[sweep] k6 output (tail):\n{tail}")
-    window = f"{max(1, math.ceil(run.seconds / 60))}m"
+    window = loadgen.measurement_window(run.seconds)
     print(f"[sweep]   done in {run.seconds:.0f}s; measuring over last {window}")
+    _save_k6_output(run, os.path.join(args.out, f"load-{level}"))
 
     prom = Prometheus(args.prometheus, timeout=10.0)
     rows = measure(prom, spec, window=window)
@@ -293,7 +306,8 @@ def _run_sweep(spec, spec_path, args, cfg, levels) -> int:
         _write(mpath, text)
         cap_text = capacity_section(spec, meas, target_util, max_response)
         _write(os.path.join(ldir, "report.txt"),
-               _render_report(results, f"load sweep @ {level} VUs", cap_text))
+               _render_report(results, f"load sweep @ {level} VUs", cap_text,
+                              unmeasured_recovery(spec, meas)))
         _write(os.path.join(ldir, "report-explained.txt"),
                explain(results, spec, meas))
         if not args.no_figures:
@@ -366,7 +380,8 @@ def _run_single(spec, spec_path, args, do_load, do_chaos) -> int:
 
     target_util, max_response = capacity_target(spec, args)
     cap_text = capacity_section(spec, measurements, target_util, max_response)
-    text = _render_report(results, source, cap_text)
+    text = _render_report(results, source, cap_text,
+                          unmeasured_recovery(spec, measurements))
     sys.stdout.write(text)
     report_path = _write(os.path.join(args.out, "report.txt"), text)
 

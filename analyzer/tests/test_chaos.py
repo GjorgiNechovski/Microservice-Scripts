@@ -16,7 +16,7 @@ import math
 import tomllib
 from datetime import datetime, timedelta, timezone
 
-from analyzer.chaos.dockercli import ContainerState
+from analyzer.chaos.dockercli import ContainerState, DockerError
 from analyzer.chaos.injector import (
     component_to_service,
     measure_mttr,
@@ -26,6 +26,7 @@ from analyzer.chaos.injector import (
     resolve_containers,
     verify_recovered,
 )
+from analyzer.spec import unmeasured_recovery
 
 REL = 1e-9
 
@@ -53,12 +54,20 @@ class _FakeContainer:
 
 
 class FakeDocker:
-    def __init__(self, service_map: dict, containers: dict):
+    def __init__(self, service_map: dict, containers: dict, projects=None):
         self.service_map = service_map           # compose service -> [names]
         self.c = containers                      # name -> _FakeContainer
+        self.projects = projects or {}           # name -> compose project
 
-    def containers_for(self, svc):
-        return sorted(self.service_map.get(svc, []))
+    def _project(self, name):
+        return self.projects.get(name, "app")
+
+    def containers_for(self, svc, project=None):
+        return sorted(n for n in self.service_map.get(svc, [])
+                      if project is None or self._project(n) == project)
+
+    def projects_for(self, svc):
+        return {self._project(n) for n in self.service_map.get(svc, [])}
 
     def container_ips(self, name):
         return ["10.0.0.5"]
@@ -125,6 +134,37 @@ def test_resolve_containers():
     assert got["blog-service"] == ["blog-service-1", "blog-service-2",
                                    "blog-service-3"]
     assert got["kong"] == ["api-gateway-1"]        # resolved via mapping
+
+
+def _two_projects():
+    # another project on the same host also has a "blog-service"
+    fake = _fake()
+    fake.service_map["blog-service"].append("other-blog-service-1")
+    fake.c["other-blog-service-1"] = _FakeContainer("other-blog-service-1")
+    fake.projects = {"other-blog-service-1": "other"}
+    return fake
+
+
+def test_resolve_refuses_a_service_shared_by_two_projects():
+    try:
+        resolve_containers(_SPEC, _two_projects())
+    except DockerError as exc:
+        assert "compose_project" in str(exc) and "other" in str(exc)
+    else:
+        raise AssertionError("matched another project's containers")
+
+
+def test_resolve_scopes_to_compose_project():
+    spec = {**_SPEC, "compose_project": "app"}
+    got = resolve_containers(spec, _two_projects())
+    assert got["blog-service"] == ["blog-service-1", "blog-service-2",
+                                   "blog-service-3"]
+
+
+def test_plan_reports_a_service_shared_by_two_projects():
+    plans = {p.component: p for p in plan(_SPEC, _two_projects())}
+    assert "compose_project" in plans["blog-service"].note
+    assert plans["blog-service"].containers == []
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +384,27 @@ def test_verify_recovered_flags_unhealthy_container():
     report = verify_recovered(docker, _SPEC, timeout=0.2, heal=False)
     assert "blogging-db" in report.unhealthy
     assert not report.all_ok
+
+
+def test_render_clears_placeholder_mark_only_for_timed_components():
+    existing = {
+        "services": {
+            "blog-service": {"replicas": 3, "failure_rate": 0.03,
+                             "repair_rate": 12.0, "repair_rate_measured": False,
+                             "arrival_rate": 1.42, "service_rate": 21.57},
+        },
+        "infrastructure": {
+            "kong": {"failure_rate": 0.02, "repair_rate": 12.0,
+                     "repair_rate_measured": False},
+            "blogging-db": {"failure_rate": 0.005, "repair_rate": 6.0},
+        },
+    }
+    results = {"blog-service": measure_mttr(
+        _fake(), "blog-service", ["blog-service-1"], 1)}
+    parsed = tomllib.loads(render_measured_toml(_SPEC, results, existing))
+    # timed now -> measured; never timed -> still a placeholder; timed by an
+    # earlier pass (no mark) -> still measured
+    assert unmeasured_recovery(_SPEC, parsed) == ["kong"]
 
 
 def _run_all() -> int:
