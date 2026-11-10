@@ -106,6 +106,28 @@ The FINKI example walks through all of this on a real system:
 | `python3 -m analyzer.collect <spec> --discover` | what Prometheus can see for this system |
 | `python3 -m analyzer.chaos <spec>` | fault-injection plan (add `--run` to actually inject) |
 | `python3 -m analyzer.figures <spec>` | the figures only |
+| `python3 -m analyzer.hotspots <spec>` | per-endpoint breakdown: which requests keep each service busy (`--at` re-reads a past run) |
+| `python3 -m analyzer.validity <spec> --out <dir>` | re-check a finished run against the "before you believe any number" checklist |
+| `python3 -m analyzer.logscan <spec> --out <dir>` | count known "ran out" errors in each level's container logs (read-only; the containers must still exist) |
+| `python3 -m analyzer <spec> --no-measure --out <dir> --compare-replicas <other>` | re-analyse a sweep against another one run with different replica counts: what each extra copy really added |
+
+Every load run also writes `validity.txt` (can its numbers be trusted?) and
+`hotspots.txt` (which endpoints the time goes to) next to its report, each
+with a plain-language `-explained.txt` twin; the sweep's scaling report lists
+every level's verdict and the busiest endpoints at the top level. Each level is
+also judged by what k6 measured (p95 response time and failed requests): a
+level the users would have noticed caps the sweep's "highest comfortable load",
+even when every service kept up. The thresholds are in the spec's optional
+`[responsiveness]` table (see `systems/TEMPLATE.toml`). When throughput levels
+off while the machine still has CPU to spare, the diagnosis reports a hidden
+limit (a connection pool, a worker limit, a lock) instead of recommending
+replicas, and names it when the containers' logs show a known "ran out"
+message (`[logs]` in the template). Response times in the reports are the
+measured ones; the queueing model's own response time is not shown, since it
+assumes a replica serves one request at a time. Replica counts assume each
+copy adds a full copy's capacity unless `--compare-replicas` points at a sweep
+of the same system on different counts: the measured gain per copy is used
+instead (in testing, a second copy on one machine added 41% of the first).
 
 Fault injection really does stop containers. Single-instance components go
 down briefly while they recover; the plan (`analyzer.chaos` without `--run`)

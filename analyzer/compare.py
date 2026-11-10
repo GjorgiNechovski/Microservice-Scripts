@@ -8,6 +8,12 @@ did it get better, worse, or stay the same? Reported as hard numbers
 
 Every metric has a known "good direction"; a change smaller than a few percent
 counts as "no change" so measurement noise doesn't read as real movement.
+
+Response time is always the MEASURED mean latency (``1/service_rate``), never
+the M/M/c model's W, which assumes one request at a time per replica. A service
+whose rate is only a floor in either run (the sweep never saw it level off, see
+saturation.py) has no model ceiling or utilization worth comparing either: they
+are bounds, so only its latency is compared.
 """
 
 from __future__ import annotations
@@ -96,19 +102,23 @@ def compare(spec, prev_meas, curr_meas, vus, target) -> Comparison:
     # downtime -- so each is counted ONCE, never double-tallied.
     metrics = []
     for name in spec["services"]:
-        qp, qc = ap["services"][name].queue, ac["services"][name].queue
-        metrics += [
-            _m("throughput ceiling (req/s)", name,
-               cp[name].ceiling_throughput, cc[name].ceiling_throughput, True,
-               abs_eps=0.5),
-            # utilization only "moves" once it's within reach of the target;
-            # a sliver of extra load on a near-idle service isn't a regression.
-            _m("utilization", name, qp.rho, qc.rho, False, prec=2,
-               floor=0.5 * target),
-            _m("response time (ms)", name,
-               qp.W * 1000 if qp.stable else math.inf,
-               qc.W * 1000 if qc.stable else math.inf, False, abs_eps=1.0),
-        ]
+        if not (ap["services"][name].mu_lower_bound
+                or ac["services"][name].mu_lower_bound):
+            qp, qc = ap["services"][name].queue, ac["services"][name].queue
+            metrics += [
+                _m("throughput ceiling (req/s)", name,
+                   cp[name].ceiling_throughput, cc[name].ceiling_throughput,
+                   True, abs_eps=0.5),
+                # utilization only "moves" once it's within reach of the
+                # target; a sliver of extra load on a near-idle service isn't
+                # a regression.
+                _m("utilization", name, qp.rho, qc.rho, False, prec=2,
+                   floor=0.5 * target),
+            ]
+        # what was measured, never the model's response time
+        metrics.append(_m("measured latency (ms)", name,
+                          ap["services"][name].latency_ms,
+                          ac["services"][name].latency_ms, False, abs_eps=0.5))
 
     ops = list(ap["top_events"])
     for op in ops:
@@ -177,6 +187,13 @@ def comparison_report(comp: Comparison, prev_when: str | None = None) -> str:
     lines.append("-" * 74)
     for name in comp.services:
         _block(name)
+    lines.append("\n  measured latency = server-side mean from the request "
+                 "histogram (the M/M/c")
+    lines.append("  model's response time is not compared: it assumes one request "
+                 "at a time per")
+    lines.append("  replica). Where the sweep never reached a limit, ceiling and "
+                 "utilization are")
+    lines.append("  only bounds and are left out.")
     lines.append("\n" + "-" * 74)
     lines.append("Reliability (per operation)")
     lines.append("-" * 74)
@@ -187,8 +204,8 @@ def comparison_report(comp: Comparison, prev_when: str | None = None) -> str:
 
 # every scored metric can be narrated, so a "mixed"/"worse" headline is never
 # left unexplained
-_PLAIN = {"throughput ceiling (req/s)", "response time (ms)",
-          "downtime (min/yr)", "utilization"}
+_PLAIN = {"throughput ceiling (req/s)", "downtime (min/yr)", "utilization",
+          "measured latency (ms)"}
 
 
 def _phrase(m: Metric) -> str:
@@ -197,10 +214,9 @@ def _phrase(m: Metric) -> str:
         dirn = "more" if better else "less"
         return (f"{e} can handle {dirn} traffic overall "
                 f"(about {m.prev:.0f} → {m.curr:.0f} requests/second)")
-    if m.name.startswith("response time"):
-        pv = "over the limit" if m.prev == math.inf else f"{m.prev:.0f} ms"
-        cv = "over the limit" if m.curr == math.inf else f"{m.curr:.0f} ms"
-        return f"{e} responds {'faster' if better else 'slower'} ({pv} → {cv})"
+    if m.name.startswith("measured latency"):
+        return (f"{e} answered {'faster' if better else 'slower'} on average "
+                f"({_fv(m.prev)} ms → {_fv(m.curr)} ms, as measured)")
     if m.name.startswith("downtime"):
         return (f"\"{e}\" downtime {'dropped' if better else 'rose'} "
                 f"from {m.prev:.0f} to {m.curr:.0f} minutes a year")

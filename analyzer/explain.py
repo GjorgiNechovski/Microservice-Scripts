@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 import sys
 
+from analyzer.logscan import level_explain as level_logs_explain
+from analyzer.responsiveness import level_explain, plain_strain
 from analyzer.spec import (analyze, load_or_default_measurements, load_system,
                            unmeasured_recovery)
 
@@ -66,7 +68,20 @@ def _recovery_phrase(seconds: float) -> str:
 # the narrative
 # ---------------------------------------------------------------------------
 
-def explain(results: dict, spec: dict, measurements: dict) -> str:
+def explain(results: dict, spec: dict, measurements: dict, feel=None,
+            position=None, logs=None) -> str:
+    """``feel`` (a responsiveness.Feel, optional): what the load generator saw
+    at this load, so the speed verdict also reflects response times and
+    failed requests, not only whether the services kept up.
+
+    ``position`` (a diagnose.LevelPosition, optional): where this level stood
+    against the limit its load sweep hit. When given, it decides whether the
+    services that levelled off were overloaded here -- the per-level queueing
+    math alone reads a level past the limit as fine, because failed requests
+    lower the traffic it divides.
+
+    ``logs`` (a logscan record of this level, optional): the known error
+    messages in its containers' logs."""
     out: list = []
     w = out.append
     guessed = unmeasured_recovery(spec, measurements)
@@ -119,8 +134,20 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     w("")
     busiest = None
     overloaded = []
+    swept = position.saturated if position is not None else []
     for name, s in results["services"].items():
         q = s.queue
+        if name in swept:
+            w(f"  - {name}: {_position_phrase(position)}")
+            if position.state != "below":
+                overloaded.append(name)
+            continue
+        if s.mu_lower_bound:
+            w(f"  - {name}: kept up with this traffic. How busy it was is "
+              "unknown: in the")
+            w("    load test it never ran out of room, so its limit is higher "
+              "than tested.")
+            continue
         if not q.stable or q.rho >= 1:
             w(f"  - {name}: {_busy_phrase(q.rho, q.stable)}")
             overloaded.append(name)
@@ -130,13 +157,37 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
         if busiest is None or q.rho > busiest[1]:
             busiest = (name, q.rho)
     w("")
-    if overloaded:
+    hidden = position is not None and position.hidden is not None
+    if overloaded and hidden:
+        w(f"  ⚠ The system is {'past' if position.state == 'past' else 'at'} its "
+          "limit at this load, but the machine still had")
+        w("    power to spare: something inside limits how much runs at once "
+          "(see the")
+        w("    load sweep's SHOULD YOU ADD SERVERS, OR FIX THE CODE?).")
+    elif overloaded:
         w(f"  ⚠ These are overloaded at the measured traffic: {', '.join(overloaded)}.")
         w("    They need more copies, or the traffic reduced.")
+    elif position is not None and swept:
+        w(f"  Everything is keeping up: about {position.share * 100:.0f}% of the "
+          "most the system handled.")
     elif busiest:
         w(f"  Everything is keeping up. The busiest is {busiest[0]} at "
           f"{busiest[1] * 100:.0f}% — still within comfort.")
+    else:
+        w("  Everything kept up with the measured traffic.")
+    felt = level_explain(feel, _overloaded_answer(position) if swept
+                         else overloaded)
+    if felt:
+        w("")
+        for line in felt:
+            w(line)
+    said = level_logs_explain(logs)
+    if said:
+        w("")
+        for line in said:
+            w(line)
     w("")
+    strained = feel is not None and feel.strained
 
     # -- reliability ----------------------------------------------------
     w("IS IT RELIABLE?")
@@ -208,7 +259,19 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     w("-" * 70)
     w("Two separate problems can both say 'add a replica' — do not confuse them:")
     w("")
-    if overloaded:
+    if overloaded and hidden:
+        w(f"  1) SPEED: the system is {'past' if position.state == 'past' else 'at'}"
+          " its limit at this load, but not because the")
+        w("     machine ran out of power, so more copies are not automatically "
+          "the fix:")
+        w("     something inside limits how much runs at once (a connection pool,")
+        w("     a cap on workers or threads, a lock). The load sweep's summary "
+          "says")
+        w("     more; copies help only if each brings its own share of that "
+          "limit.")
+        w("")
+        w("  2) RELIABILITY — the ranking below. It answers a DIFFERENT question:")
+    elif overloaded:
         w("  1) SPEED — URGENT. These services are overloaded at the measured")
         w(f"     traffic: {', '.join(overloaded)}.")
         w("     Work arrives faster than one copy can serve it, so queues and")
@@ -218,6 +281,14 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
         w("     sizing in the technical report for how many copies.")
         w("")
         w("  2) RELIABILITY — the ranking below. It answers a DIFFERENT question:")
+    elif strained:
+        w("  1) SPEED: no part is overloaded, but the people using it noticed:")
+        w(f"     {plain_strain(feel)}.")
+        w("     This load is past comfortable. Where the time goes is in")
+        w("     hotspots.txt; the load sweep's summary says up to how many")
+        w("     users it stayed comfortable.")
+        w("")
+        w("  2) RELIABILITY — the ranking below answers a different question:")
     else:
         w("  1) SPEED: nothing is overloaded at the measured traffic, so speed")
         w("     needs no fix right now.")
@@ -247,11 +318,18 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     # -- one-liner ------------------------------------------------------
     w("IN ONE SENTENCE")
     w("-" * 70)
-    speed = "strained" if overloaded else "fast enough for its traffic"
+    speed = ((f"{'past' if position.state == 'past' else 'at'} its limit "
+              "at this load") if overloaded and hidden else
+             "strained" if overloaded else
+             "keeping up but noticeably slower for its users" if strained else
+             "fast enough for its traffic")
     weak = "has a few single weak points" if any(
         results["top_events"][o].spofs for o in results["top_events"]) \
         else "has no single weak points"
-    if overloaded:
+    if overloaded and hidden:
+        tail = ("; the limit is hidden inside, not the machine's power (see the "
+                "load sweep's summary).")
+    elif overloaded:
         tail = f"; the urgent fix is more capacity for {', '.join(overloaded)}"
         if best_global:
             tail += (f" (for reliability, the best upgrade is "
@@ -263,6 +341,29 @@ def explain(results: dict, spec: dict, measurements: dict) -> str:
     w(f"{results['name']} is {speed} and {weak}{tail}")
     w("")
     return "\n".join(out)
+
+
+def _position_phrase(pos) -> str:
+    """One service line from where the level stood in its sweep."""
+    if pos.state == "past":
+        return (f"past its limit: the system handled {pos.share * 100:.0f}% of "
+                f"what it managed at {pos.peak_vus} users, so it was turning work "
+                "away.")
+    if pos.state == "at":
+        return ("at its limit: this is the most the system handled in the load "
+                "test.")
+    return (f"kept up: about {pos.share * 100:.0f}% of the most the system "
+            f"handled in the load test ({pos.peak_rps:.0f} requests a second, at "
+            f"{pos.peak_vus} users).")
+
+
+def _overloaded_answer(pos) -> str:
+    """The "Overloaded?" answer from where the level stood in its sweep."""
+    if pos.state == "past":
+        return f"YES: past its limit (it handled less than at {pos.peak_vus} users)"
+    if pos.state == "at":
+        return "at its limit: the most it handled in the load test"
+    return f"no, about {pos.share * 100:.0f}% of the most it handled in the load test"
 
 
 def main(argv=None) -> int:

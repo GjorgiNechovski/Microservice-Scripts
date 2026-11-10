@@ -325,8 +325,19 @@ class Measurement:
         return None not in (self.replicas, self.arrival_rate, self.service_rate)
 
 
-def measure(prom: Prometheus, spec: dict, window: str = "5m") -> list[Measurement]:
-    """Measure c, lambda, mu, rho for every service in the spec."""
+def _instant(prom: Prometheus, query: str, at=None) -> list[Sample]:
+    """Instant query now, or at ``at`` (only passed when set, so any client
+    with a one-argument ``instant`` keeps working)."""
+    return prom.instant(query) if at is None else prom.instant(query, at=at)
+
+
+def measure(prom: Prometheus, spec: dict, window: str = "5m",
+            at=None) -> list[Measurement]:
+    """Measure c, lambda, mu, rho for every service in the spec.
+
+    ``at`` re-measures a finished run: the window then ends at that moment
+    (RFC 3339 or unix time) instead of now.
+    """
     names = set(prom.metric_names())
     request_metric = _first_present(_REQUEST_TOTAL_CANDIDATES, names)
     latency = _resolve_latency(names)
@@ -336,12 +347,13 @@ def measure(prom: Prometheus, spec: dict, window: str = "5m") -> list[Measuremen
     lam: dict = {}
     if request_metric:
         lam = _by_label(
-            prom.instant(f"sum by ({label})(rate({request_metric}[{window}]))"),
+            _instant(prom, f"sum by ({label})(rate({request_metric}[{window}]))",
+                     at),
             label)
 
     mu: dict = {}
     if latency:
-        raw_mean = _by_label(prom.instant(latency.mean_query(window, label)),
+        raw_mean = _by_label(_instant(prom, latency.mean_query(window, label), at),
                              label)
         for svc, raw in raw_mean.items():
             seconds = raw * latency.to_seconds
@@ -355,10 +367,11 @@ def measure(prom: Prometheus, spec: dict, window: str = "5m") -> list[Measuremen
         rq = (f"count by ({_COMPOSE_LABEL})(group by ({_COMPOSE_LABEL}, name)"
               f"(container_last_seen{{{sel}}} > time() - {_SEEN_WITHIN_S}))")
         replicas = {k: int(round(v))
-                    for k, v in _by_label(prom.instant(rq), _COMPOSE_LABEL).items()}
+                    for k, v in _by_label(_instant(prom, rq, at),
+                                          _COMPOSE_LABEL).items()}
         cq = (f"sum by ({_COMPOSE_LABEL})(rate("
               f"container_cpu_usage_seconds_total{{{sel}}}[{window}]))")
-        cpu = _by_label(prom.instant(cq), _COMPOSE_LABEL)
+        cpu = _by_label(_instant(prom, cq, at), _COMPOSE_LABEL)
 
     results: list[Measurement] = []
     for name in spec["services"]:
@@ -413,7 +426,8 @@ def _repair_placeholder(prev: dict) -> bool:
 def render_measured_toml(spec: dict, measurements: list[Measurement],
                          existing: dict | None = None,
                          effective: dict | None = None,
-                         inherit_effective: bool = True) -> str:
+                         inherit_effective: bool = True,
+                         lower_bound=()) -> str:
     """Render a ``*.measured.toml`` string.
 
     Phase 1 owns ``replicas`` / ``arrival_rate`` / ``service_rate``. It
@@ -434,6 +448,10 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
     whether a service saturated *in this run*, and inheriting a previous run's
     effective rate would let a stale mu drive that decision -- masking a real
     regression, or inventing a saturation that did not happen.
+
+    ``lower_bound`` names services whose effective rate is only a floor (the
+    sweep never saw their throughput level off); they get
+    ``service_rate_lower_bound = true``, carried forward with an inherited rate.
     """
     existing = existing or {}
     effective = effective or {}
@@ -453,8 +471,12 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
         "#",
         "#   failure_rate / repair_rate : per hour   (reliability, Layer 2)",
         "#   arrival_rate / service_rate: per second (performance, Layer 1)",
+        "#   service_rate               : 1 / measured mean latency; a fallback",
+        "#                                is marked service_rate_measured = false",
         "#   service_rate_effective     : per second, clean throughput-recovered",
         "#                                per-replica rate (Layer 1 prefers it)",
+        "#   service_rate_lower_bound   : true = no plateau seen, so the effective",
+        "#                                rate is only a floor (limit not reached)",
         "#   replicas                   : counted from cAdvisor",
         "# " + "=" * 75,
         "",
@@ -479,11 +501,17 @@ def render_measured_toml(spec: dict, measurements: list[Measurement],
             lines.append("repair_rate_measured = false")
         lines.append(f"arrival_rate = {_fmt(float(arrival))}")
         lines.append(f"service_rate = {_fmt(float(service))}")
+        if m.service_rate is None:      # a fallback: never read it as latency
+            lines.append("service_rate_measured = false")
         eff = effective.get(m.name)
+        floor = m.name in lower_bound
         if eff is None and inherit_effective:
             eff = prev.get("service_rate_effective")
+            floor = bool(prev.get("service_rate_lower_bound"))
         if eff is not None:
             lines.append(f"service_rate_effective = {_fmt(float(eff))}")
+            if floor:
+                lines.append("service_rate_lower_bound = true")
         if not m.fully_measured:
             lines.append("# NOTE: one or more values above are fallbacks, not "
                          "measured. See collector output.")

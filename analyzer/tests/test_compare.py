@@ -50,11 +50,13 @@ def test_overall_no_change_when_identical():
     assert c.tally["improved"] == 0 and c.tally["worse"] == 0
 
 
-def test_response_time_flip_counts_as_improved():
+def test_response_time_is_the_measured_one():
     c = compare(_SPEC, _SLOW, _FAST, _VUS, _TARGET)
     w = next(m for m in c.metrics
-             if m.entity == "blog" and m.name.startswith("response time"))
-    assert w.verdict == "improved"          # was OVER (unstable), now finite
+             if m.entity == "blog" and m.name == "measured latency (ms)")
+    assert w.verdict == "improved"
+    assert abs(w.prev - 1000.0 / 1.5) < 1e-6        # 1 / measured service_rate
+    assert not any(m.name.startswith("response time") for m in c.metrics)
 
 
 def test_capacity_up_with_tiny_utilization_uptick_reads_improved():
@@ -95,6 +97,25 @@ def test_explain_is_plain_language():
     text = comparison_explain(c)
     for jargon in ("ρ", "μ", "M/M/c", "utilization", "MTTR"):
         assert jargon not in text, f"jargon leaked: {jargon}"
+
+
+def test_a_floor_rate_compares_measured_latency_only():
+    # Both runs kept pace (rate recorded as a floor): the model's ceiling and
+    # utilization are bounds that read "OVER -> OVER"; the measured latency
+    # (1/service_rate: 40 ms -> 20 ms) is the real change.
+    def floored(service_rate):
+        m = _meas(arrival=18.0, service_rate=service_rate, replicas=1)
+        m["services"]["blog"].update(service_rate_effective=18.0,
+                                     service_rate_lower_bound=True)
+        return m
+
+    c = compare(_SPEC, floored(25.0), floored(50.0), _VUS, _TARGET)
+    blog = [m for m in c.metrics if m.entity == "blog"]
+    assert [m.name for m in blog] == ["measured latency (ms)"]
+    assert abs(blog[0].prev - 40.0) < 1e-9 and blog[0].verdict == "improved"
+    assert c.overall == "improved"
+    assert "measured latency" in comparison_report(c)
+    assert "answered faster on average (40.0 ms → 20.0 ms" in comparison_explain(c)
 
 
 def _run_all() -> int:

@@ -152,6 +152,9 @@ class ServiceResult:
     queue: object            # QueueMetrics (Layer 1)
     reliability: object      # ReliabilityResult for the tier (Layer 2)
     per_replica_availability: float
+    mu_lower_bound: bool = False   # mu is a floor -> queue rho/W are upper bounds
+    latency_ms: float | None = None  # MEASURED mean time per request (queueing
+                                     # included); None when not measured
 
 
 @dataclass
@@ -267,6 +270,27 @@ def failure_rate_for(spec: dict, component: str, measured: float) -> float:
     return measured
 
 
+def measured_latency_ms(params: dict) -> float | None:
+    """A service's measured mean time per request in ms, or None.
+
+    ``service_rate`` is ``1 / mean latency`` as the collector measured it
+    (queueing included), so this is the measured latency itself, not a model.
+    None when the collector found no latency samples (``service_rate_measured
+    = false``: the rate is then a fallback, not a measurement).
+    """
+    raw = float(params.get("service_rate", 0.0))
+    if raw <= 0 or params.get("service_rate_measured") is False:
+        return None
+    return 1000.0 / raw
+
+
+def fmt_ms(ms: float | None) -> str:
+    """A latency for a table: one decimal under 10 ms, '—' when unmeasured."""
+    if ms is None:
+        return "—"
+    return f"{ms:.1f}" if ms < 10 else f"{ms:.0f}"
+
+
 def analyze(spec: dict, measurements: dict) -> dict:
     """Run all four analysis layers on a spec + its measurements."""
     services = spec["services"]
@@ -289,7 +313,10 @@ def analyze(spec: dict, measurements: dict) -> dict:
         queue = mmc_metrics(p["arrival_rate"], mu_perf, c)
         tier = replicated_reliability(c, fr, p["repair_rate"], k=1)
         per_replica = component_reliability(fr, p["repair_rate"]).availability
-        service_results[name] = ServiceResult(name, c, queue, tier, per_replica)
+        floor = ("service_rate_effective" in p
+                 and bool(p.get("service_rate_lower_bound")))
+        service_results[name] = ServiceResult(name, c, queue, tier, per_replica,
+                                              floor, measured_latency_ms(p))
 
     # Layer 2, per infrastructure component.
     infra_results = {name: component_reliability(

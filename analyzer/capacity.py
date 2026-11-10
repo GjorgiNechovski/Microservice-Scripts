@@ -148,9 +148,28 @@ def capacity_target(spec: dict, args=None) -> tuple:
 
 def capacity_section(spec: dict, measurements: dict,
                      target_utilization: float = _DEFAULT_TARGET_UTIL,
-                     max_response: float | None = None) -> str:
-    """A report block: current vs needed replicas at the measured load."""
+                     max_response: float | None = None,
+                     position=None, scaleout=None) -> str:
+    """A report block: current vs needed replicas at the measured load.
+
+    ``position`` (a diagnose.LevelPosition from the load sweep, optional): for
+    a service that levelled off, a level PAST the sweep's limit is not sized
+    (its arrival rate counts refused requests, so the sizing would read low),
+    and the level AT the limit is sized against the observed peak.
+    ``scaleout`` (scaleout.ScaleOut, optional): what an added copy really
+    added against another sweep; extra copies are then counted with that
+    instead of a full copy each (a count that only says "fewer would do"
+    keeps the full-copy math, which the measured gain cannot speak to).
+    """
     sizings = size_services(spec, measurements, target_utilization, max_response)
+    entry = max(float(p["arrival_rate"])
+                for n, p in measurements["services"].items()
+                if n in spec["services"])
+
+    def measured_need(name, load):
+        if scaleout is None or not scaleout.usable:
+            return None
+        return scaleout.copies_for(name, load, target_utilization)
     tgt = f"utilization <= {target_utilization:.2f}"
     if max_response is not None:
         tgt += f", response <= {max_response * 1000:.0f} ms"
@@ -163,12 +182,47 @@ def capacity_section(spec: dict, measurements: dict,
         f"{'service':<18}{'λ req/s':>10}{'μ/rep':>9}{'now':>5}{'need':>6}"
         f"{'ρ now':>8}  verdict",
     ]
+    ms = measurements["services"]
+    floors = [n for n in spec["services"]
+              if ms[n].get("service_rate_lower_bound")
+              and "service_rate_effective" in ms[n]]
+    swept = position.saturated if position is not None else []
+    past = [n for n in swept if position.state == "past"]
+    at = [n for n in swept if position.state == "at"]
+    under_measured, ok_measured = [], []
     for name in spec["services"]:
         s = sizings[name]
         rho = "inf" if s.rho_current == math.inf else f"{s.rho_current:.2f}"
+        if name in past:
+            lines.append(f"{name:<18}{s.lam:>10.2f}{s.mu:>9.2f}{s.current:>5}"
+                         f"{'—':>6}{'≤' + rho:>8}  past the sweep's limit — not "
+                         "sized (λ counts refused requests)")
+            continue
+        if name in at:
+            m = measured_need(name, position.peak_rps)
+            need = m if m is not None else s.needed
+            lines.append(f"{name:<18}{s.lam:>10.2f}{s.mu:>9.2f}{s.current:>5}"
+                         f"{need:>6}{rho:>8}  AT the sweep's limit — "
+                         f"{need} for headroom at this load"
+                         + (" (measured gain)" if m is not None else ""))
+            continue
+        if name in floors:
+            lines.append(f"{name:<18}{s.lam:>10.2f}{'≥' + format(s.mu, '.2f'):>9}"
+                         f"{s.current:>5}{'—':>6}{'≤' + rho:>8}  limit not "
+                         "reached — kept up in the sweep, nothing to size")
+            continue
+        m = measured_need(name, entry) if s.reliable else None
         if not s.reliable:
             need = "n/a"
             v = "μ unreliable — overloaded during measurement (ρ≥1)"
+        elif m is not None and m > s.current:
+            need = str(m)
+            v = f"UNDER by {m - s.current} — add replicas (measured gain)"
+            under_measured.append(name)
+        elif s.verdict == "under" and m is not None:
+            need = str(m)
+            v = "right-sized (by the measured gain)"
+            ok_measured.append(name)
         elif s.verdict == "under":
             need = str(s.needed)
             v = f"UNDER by {s.delta} — add replicas"
@@ -181,10 +235,16 @@ def capacity_section(spec: dict, measurements: dict,
         lines.append(f"{name:<18}{s.lam:>10.2f}{s.mu:>9.2f}{s.current:>5}"
                      f"{need:>6}{rho:>8}  {v}")
 
-    reliable = [n for n in spec["services"] if sizings[n].reliable]
-    unreliable = [n for n in spec["services"] if not sizings[n].reliable]
-    under = [n for n in reliable if sizings[n].verdict == "under"]
-    over = [n for n in reliable if sizings[n].verdict == "over"]
+    reliable = [n for n in spec["services"]
+                if sizings[n].reliable and n not in floors]
+    unreliable = [n for n in spec["services"]
+                  if not sizings[n].reliable and n not in floors
+                  and n not in past and n not in at]
+    under = [n for n in reliable
+             if (sizings[n].verdict == "under" and n not in ok_measured)
+             or n in under_measured]
+    over = [n for n in reliable if sizings[n].verdict == "over"
+            and n not in under_measured]
     lines.append("")
     if under:
         lines.append(f"  under-provisioned at this load: {', '.join(under)}")
@@ -197,7 +257,26 @@ def capacity_section(spec: dict, measurements: dict,
                      "problem; more replicas")
         lines.append("    won't help until that is fixed, or measure it at a "
                      "lower load.")
-    if not under and not over and not unreliable:
+    if floors:
+        lines.append(f"  limit not reached in the load sweep (μ is a floor, ρ an "
+                     f"upper bound): {', '.join(floors)}")
+    if past:
+        lines.append(f"  past the limit the load sweep hit (overloaded here): "
+                     f"{', '.join(past)}")
+    measured = scaleout is not None and scaleout.usable
+    if measured:
+        g = next(iter(scaleout.gains.values()))
+        lines.append(f"  extra replicas are counted with the gain measured "
+                     f"against another sweep: ~{g.gain_per_copy:.0f} req/s")
+        lines.append(f"    each, {g.efficiency * 100:.0f}% of a full one (see "
+                     "the scaling report's 'Measured scale-out').")
+    elif position is not None and position.hidden is not None and swept:
+        lines.append("  the sweep found a hidden limit (not CPU): these counts "
+                     "hold only if that limit")
+        lines.append("    is per replica (each brings its own pool or workers); "
+                     "see its diagnosis.")
+    if not under and not over and not unreliable and not floors and not past \
+            and not at:
         lines.append("  every service is right-sized for this load.")
     return "\n".join(lines) + "\n"
 

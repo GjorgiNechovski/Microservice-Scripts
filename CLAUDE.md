@@ -21,7 +21,7 @@ a measured number.
 
 | Tier | Commands | Rule |
 |---|---|---|
-| **Safe** | reading files; `python3 -m analyzer.tests`; `python3 -m analyzer.run_all <spec>`; `python3 -m analyzer <spec> --no-measure`; `python3 -m analyzer.collect <spec> --discover`; `python3 -m analyzer.collect <spec>` (preview); `python3 -m analyzer.chaos <spec>` (plan only) | Always fine. |
+| **Safe** | reading files; `python3 -m analyzer.tests`; `python3 -m analyzer.run_all <spec>`; `python3 -m analyzer <spec> --no-measure` (with or without `--compare-replicas <dir>`); `python3 -m analyzer.collect <spec> --discover`; `python3 -m analyzer.collect <spec>` (preview); `python3 -m analyzer.chaos <spec>` (plan only); `python3 -m analyzer.logscan <spec> --out <dir>` (reads `docker logs`) | Always fine. |
 | **Generates load** | `python3 -m analyzer <spec> --skip-chaos`; `python3 -m analyzer.collect <spec> --run-load`; running k6 | Only on an environment the human has said is theirs to hammer (local or dev). Otherwise ask. |
 | **Stops containers** | `python3 -m analyzer.chaos <spec> --run`; **`python3 -m analyzer <spec>` with no flags** | **Always ask first, even locally.** Show the output of `python3 -m analyzer.chaos <spec>` with your question so the human sees exactly what would go down. |
 | **Changes their app** | editing their source, Dockerfiles or compose; adding instrumentation | Ask first, unless told the app is a throwaway or dev copy. Prefer a separate compose overlay to editing their base file. |
@@ -238,7 +238,18 @@ what) still hold.
 ## Before you believe any number
 
 Check all of these. If one fails, the run is invalid: say so, and don't report
-its numbers.
+its numbers. Checks 1, 3, 4 and 6 (plus k6's error rate) run automatically
+after every load run: read `validity.txt` in the run's directory, or re-check
+a finished run with `python3 -m analyzer.validity <spec> --out <dir>`. Checks
+2, 5 and 7 still need you.
+
+Failed requests are not one of these: they say how the system coped, not
+whether the test worked. A level where more than 5% of requests failed (or
+fewer than 95% of k6's checks passed) is marked `OVERLOADED`, not `INVALID`:
+report its failure rate and response times as the result, but don't size from
+it (failed requests count as cheap arrivals, so the services look less busy).
+If even the lightest level fails, suspect the test first: an expired token or
+a wrong URL fails every request at any load.
 
 1. **cAdvisor stayed up for the whole run.** Query Prometheus for
    `avg_over_time(up{job="cadvisor"}[<run length>])`; it must be 1. One missed
@@ -278,6 +289,25 @@ its numbers.
   at ~97 req/s" while it used 0.45 cores per replica; with the real bottleneck
   doubled, it served 165 req/s. Trust `service_rate_effective` and the "add
   replicas" verdict only for the service whose CPU confirms it.
+- **No plateau, no capacity.** `1/latency` is a replica's capacity only if it
+  serves one request at a time; a thread pool or event loop (.NET, Java, Go,
+  async Python) completes far more, so the latency rule calls it overloaded
+  while it keeps up. The sweep therefore believes "saturated" only when the
+  throughput per user also fell by more than 15% from its best lower level. If
+  it never did, the top level's throughput per replica is recorded as a floor
+  (`service_rate_lower_bound = true`), reports show `≥`/`≤`, and no bottleneck
+  or replica count is given. Before this rule the tool answered every such
+  sweep with "add replicas: `ceil(c / target)`", whatever the real limit
+  (in testing on a .NET gateway and API: "add about 2", then with 2 copies,
+  "add about 3", while each copy used under one core). With a think-time the
+  plateau shows late: throughput per user only drops once responses take a
+  noticeable part of the pause (about 0.75 s at 5 s). So every level is also
+  judged by what k6 measured, its p95 and failed requests (`[responsiveness]`
+  in the spec, `responsiveness.py`): a level the users felt caps the "highest
+  comfortable load", even when the capacity math says everything kept up.
+  Before that check, a level with p95 tripled and 0.37% of requests failing
+  read "fast enough". To measure the capacity limit itself, raise the load or
+  drop the think-time.
 - **A caller's latency includes its callees'.** A service that calls another
   synchronously reports the other's time, queueing included, as its own, so
   its μ is not its own cost.
@@ -286,19 +316,48 @@ its numbers.
 - **"Supports about N users" means N closed-loop virtual users at the tested
   think-time.** With no think-time that is far fewer than real people.
 - **The model's response times do not match a closed loop.** M/M/c assumes open
-  arrivals; at 8 users it predicted 56 ms where 20 ms was measured. Quote
-  measured latency; use the model for comparisons.
+  arrivals; at 8 users it predicted 56 ms where 20 ms was measured. For a
+  concurrent server it is worse: against a plateau rate a .NET gateway's W
+  read 2 ms at a level whose measured mean was 2.8 s. So the reports, the
+  comparisons and the response-time figure show only measured latency
+  (`1/service_rate`, marked `service_rate_measured = false` when it is a
+  fallback); W is used for sizing only (`max_response_ms`).
 - **"Saturated" while the CPU idles** means a serialisation point: a small
   connection pool, a pooler's child limit, a single worker process. Find what
-  everything queues behind before adding hardware.
+  everything queues behind before adding hardware. The diagnosis now checks
+  this itself: when throughput levels off while all containers used at most
+  70% of the host's cores (the validity check's CPU numbers), the verdict is
+  `HIDDEN LIMIT — not CPU` instead of `ADD REPLICAS`, and the bottleneck line
+  says so. The metrics cannot say which service holds the limit (they all
+  level off together), so after each level the sweep reads every component's
+  `docker logs` for known "ran out" messages (`logscan.py`,
+  `load-<N>/log-signals.json`) and names the cause that appears with the
+  failures. On a .NET API under a 5 s think-time this was the MongoDB
+  driver's default pool of 100 connections per process
+  (`MongoWaitQueueFullException`). If the scan finds only timeouts or nothing,
+  read the logs yourself; add the message to `[logs] extra` for next time.
+  Replicas helped there only because each brought its own pool.
+- **A level past the limit reads "fine" on its own.** Failed requests lower
+  the arrival rate the queueing math divides, so a collapsed level looks less
+  busy than the peak. When a sweep levels off, each level's own reports
+  therefore say where it stood against the observed limit (below, at, or past
+  it; `diagnose.sweep_position`), levels past it are not sized, and the
+  summary sizes for the most the system actually served.
 - **The model has no notion of a shared host or connection limits.** Its
   availability predictions have been accurate; its performance predictions have
   missed in both directions. (One controlled A/B test so far: availability
   matched to five decimals, peak throughput was off by 1.9× and 3.5×.) Adding
-  replicas on one host can *lower* throughput.
+  replicas on one host can *lower* throughput. Every replica count assumes
+  each copy adds a full copy's capacity; measure it instead with a second
+  sweep on different counts and `--compare-replicas <its dir>`, which sizes
+  with the measured gain per copy. On a .NET gateway and API a second copy
+  each added 41% of the first, so the full-copy recipe ("2 copies") ran its
+  target load at 73% instead of 70%; the measured one says 3.
 - **Fixing a bottleneck moves it.** Re-sweep after every change.
 - **The diagnosis says *scale out* or *optimise*.** The specific cause still
-  needs code or traces.
+  needs code or traces, but `hotspots.txt` narrows it to the endpoints that
+  hold most of the service's busy time (λ × S per endpoint). For a caller it
+  includes its callees' time, like everything else here.
 
 ## Looks like a tool bug, isn't
 
@@ -332,7 +391,8 @@ its numbers.
 - The engine is standard-library only; numpy and matplotlib only inside
   `analyzer/figures/`.
 - Never hard-code an application or metric name in the engine; extend the
-  candidate lists in `analyzer/collect/collector.py`.
+  candidate lists in `analyzer/collect/collector.py` (metrics) or
+  `analyzer/logscan.py` `SIGNATURES` (library and server log messages).
 - Every technical report has a plain-language `*-explained.txt` twin.
 - Never invent a number: report `unmeasured` or `n/a` with the reason, and mark
   placeholders as such (as `repair_rate_measured = false` does).

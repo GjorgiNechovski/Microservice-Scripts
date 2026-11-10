@@ -151,6 +151,35 @@ def test_capacity_section_suppresses_overloaded_sizing():
     assert "n/a" in text                                # no invented replica count
 
 
+def test_capacity_section_does_not_size_from_a_floor():
+    # blog's effective rate is only a floor (the sweep never saw it level off):
+    # its rho of 0.9 is an upper bound, so no "UNDER" from it
+    meas = _meas(2, 3)
+    meas["services"]["blog"].update(service_rate_effective=10.0,
+                                    service_rate_lower_bound=True)
+    text = capacity_section(_spec(), meas)
+    assert "limit not reached" in text and "≥10.00" in text
+    assert "UNDER" not in text and "under-provisioned" not in text
+    assert "over-provisioned" in text                   # comment still judged
+
+
+def test_capacity_section_follows_the_sweeps_position():
+    from analyzer.diagnose import sweep_position
+    from analyzer.tests.test_diagnose import _TARGET, _plateau_levels
+    spec, levels = _plateau_levels()
+    pos = sweep_position(levels, spec, _TARGET)
+    by_vus = {lv.vus: lv for lv in levels}
+    past = capacity_section(spec, by_vus[2000].measurements, _TARGET,
+                            position=pos.at(2000, by_vus[2000].measurements, spec))
+    assert "past the sweep's limit — not sized" in past
+    assert "right-sized" not in past and "could not size" not in past
+    assert "only if that limit" in past                  # hidden: caveat
+    at = capacity_section(spec, by_vus[1600].measurements, _TARGET,
+                          position=pos.at(1600, by_vus[1600].measurements, spec))
+    assert "AT the sweep's limit — 2 for headroom" in at
+    assert "per-request latency" not in at               # not the n/a story
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

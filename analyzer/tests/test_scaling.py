@@ -21,6 +21,7 @@ from analyzer.scaling import (
     provisioning,
     scaling_explain,
     scaling_report,
+    unreached,
 )
 from analyzer.spec import analyze
 
@@ -117,8 +118,19 @@ def test_scaling_report_has_all_sections():
 
 
 def test_scaling_report_marks_overload():
-    # blog is unstable at 200/500 -> the response table shows OVER somewhere
-    assert "OVER" in scaling_report(_SPEC, _LEVELS, _TARGET)
+    # blog is unstable at 200/500 -> its utilization is flagged '!'
+    text = scaling_report(_SPEC, _LEVELS, _TARGET)
+    assert "!" in text.split("Utilization")[1].split("Mean response time")[0]
+
+
+def test_response_time_table_is_measured_not_modelled():
+    # 1/service_rate per level (330, 200, 40 req/s -> 3.0, 5.0, 25 ms); the
+    # model's W would read a fraction of a millisecond against the floor rate
+    text = scaling_report(_KSPEC, _FLOORED, _TARGET)
+    table = text.split("MEASURED at each service")[1].split("(each service")[0]
+    rows = [ln.split() for ln in table.splitlines() if ln[:1].isdigit()]
+    assert rows == [["200", "3.0"], ["800", "5.0"], ["1600", "25"]]
+    assert "OVER" not in text
 
 
 def test_scaling_explain_is_plain_language():
@@ -145,6 +157,89 @@ def test_scaling_figures_render():
     assert len(paths) == 5          # 4 sweep curves + the diagnose quadrant
     for p in paths:
         assert os.path.exists(p) and os.path.getsize(p) > 0
+
+
+# A sweep whose service kept pace with the users throughout, as the pipeline
+# writes it: the effective rate is the top level's throughput per replica,
+# flagged as a floor. The top level then reads rho = 1 by construction, which
+# must not turn into a bottleneck or a replica recommendation.
+_KSPEC = {"name": "K", "services": ["api"], "infrastructure": [],
+          "operations": {}}
+
+
+def _flevel(vus: int) -> LevelResult:
+    meas = {"services": {"api": {"replicas": 2, "arrival_rate": vus * 0.59,
+                                 "service_rate": {200: 330.0, 800: 200.0,
+                                                  1600: 40.0}[vus],
+                                 "service_rate_effective": 472.0,
+                                 "service_rate_lower_bound": True,
+                                 "failure_rate": 0.01, "repair_rate": 100.0}},
+            "infrastructure": {}}
+    return LevelResult(vus, meas, analyze(_KSPEC, meas),
+                       size_services(_KSPEC, meas, _TARGET))
+
+
+_FLOORED = [_flevel(v) for v in (200, 800, 1600)]
+
+
+def test_a_service_that_kept_pace_is_no_bottleneck():
+    assert bottleneck(_KSPEC, _FLOORED, _TARGET) is None
+    assert max_safe_load(_KSPEC, _FLOORED, _TARGET) == 1600
+    assert unreached(_KSPEC, _FLOORED) == ["api"]
+    assert provisioning(_KSPEC, _FLOORED) == ([], [], [], [])
+
+
+def test_reports_do_not_size_a_service_that_kept_pace():
+    text = scaling_report(_KSPEC, _FLOORED, _TARGET)
+    assert "Limit not reached        : api" in text
+    assert "api=2 (kept up)" in text and "≤1.00" in text
+    for wrong in ("Under-provisioned", "ADD REPLICAS", "maxed out"):
+        assert wrong not in text, f"still claims: {wrong}"
+    rows = [ln for ln in text.splitlines() if ln[:1].isdigit()]   # per-level rows
+    assert rows and not any("OVER" in ln or "!" in ln for ln in rows)
+    plain = scaling_explain(_KSPEC, _FLOORED, _TARGET)
+    assert "Never ran out of room" in plain and "2 × api (what you ran" in plain
+    assert "Too few copies" not in plain and "add copies" not in plain.lower()
+
+
+def test_what_users_felt_caps_the_comfortable_load():
+    # the same kept-pace sweep, now with what k6 saw: fine at 200 and 800,
+    # p95 208 ms and 0.37% failed at 1600
+    from analyzer.responsiveness import judge_levels
+    from analyzer.validity import K6Summary
+    feels = judge_levels(_KSPEC, {
+        200: K6Summary(p95_ms=15.0, failed=0.0),
+        800: K6Summary(p95_ms=35.0, failed=0.0),
+        1600: K6Summary(p95_ms=207.64, failed=0.0037)})
+    levels = [LevelResult(lv.vus, lv.measurements, lv.results, lv.sizings,
+                          feel=feels[lv.vus]) for lv in _FLOORED]
+    text = scaling_report(_KSPEC, levels, _TARGET)
+    assert "Responsiveness -- what the users saw" in text
+    assert "Highest comfortable load : 800 VUs (at 1600 VUs users felt it" in text
+    assert "api=2 (kept up, but users felt it)" in text
+    plain = scaling_explain(_KSPEC, levels, _TARGET)
+    assert "stayed comfortable up to about 800 users" in plain
+    assert "0.37% of requests failed" in plain and "not\n  smoothly" in plain
+    assert "there is\n  headroom" not in plain
+    # without k6 data the verdict is the model's, as before
+    assert "Highest comfortable load : 1600 VUs" in scaling_report(
+        _KSPEC, _FLOORED, _TARGET)
+
+
+def test_bottleneck_line_names_a_hidden_limit():
+    from analyzer.tests.test_diagnose import _plateau_levels
+    spec, levels = _plateau_levels()
+    text = scaling_report(spec, levels, _TARGET)
+    assert "Bottleneck               : hidden, not CPU" in text
+    assert "HIDDEN LIMIT — not CPU" in text
+    plain = scaling_explain(spec, levels, _TARGET)
+    assert "the real limit is" in plain and "is the weakest link" not in plain
+    # the top level (2000) is past the limit: size for the peak, with the caveat
+    assert "To serve the most it handled (1600 VUs" in text
+    assert "only if the hidden limit is per replica" in text
+    assert "To serve 2000 VUs" not in text
+    assert "The most it handled was at 1600 users" in plain
+    assert "(add some)" not in plain and "by the numbers" in plain
 
 
 def _run_all() -> int:

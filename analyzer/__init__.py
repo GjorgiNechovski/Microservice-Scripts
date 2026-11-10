@@ -13,3 +13,22 @@ Layers (thesis chapters):
 """
 
 __version__ = "0.1.0"
+
+
+def utf8_stdio() -> None:
+    """Make stdout/stderr UTF-8 for the command-line entry points.
+
+    The reports use ρ, μ and λ. On Windows, output redirected to a file or a
+    pipe is encoded with the ANSI code page (cp1252), which has none of them,
+    so a sweep whose log was redirected (as CLAUDE.md advises) crashed with
+    UnicodeEncodeError while printing its final report. Called by every
+    ``main()``; a no-op where the streams are already UTF-8 or cannot be
+    reconfigured (e.g. captured by a test runner).
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        reconfigure = getattr(stream, "reconfigure", None)
+        if encoding != "utf8" and reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")

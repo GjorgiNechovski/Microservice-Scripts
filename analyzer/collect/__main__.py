@@ -83,6 +83,9 @@ def _print_measurements(rows, window) -> None:
 
 
 def main(argv=None) -> int:
+    from analyzer import utf8_stdio
+
+    utf8_stdio()
     loadgen.load_dotenv()
 
     parser = argparse.ArgumentParser(

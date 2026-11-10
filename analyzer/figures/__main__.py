@@ -18,6 +18,9 @@ from analyzer.spec import load_or_default_measurements, load_system
 
 
 def main(argv=None) -> int:
+    from analyzer import utf8_stdio
+
+    utf8_stdio()
     parser = argparse.ArgumentParser(
         prog="python3 -m analyzer.figures",
         description="Render analysis figures (matplotlib) for a system.")

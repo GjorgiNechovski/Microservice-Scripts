@@ -2,7 +2,7 @@
 
 Only the few endpoints the collector needs, over ``urllib``:
 
-  * ``instant(query)``      -- run a PromQL instant query, return samples
+  * ``instant(query, at)``  -- run a PromQL instant query (now, or at ``at``)
   * ``metric_names()``      -- every metric name Prometheus knows about
   * ``label_values(label)`` -- every value a label takes
 
@@ -65,14 +65,20 @@ class Prometheus:
         return payload["data"]
 
     # -- queries ---------------------------------------------------------
-    def instant(self, query: str) -> list[Sample]:
+    def instant(self, query: str, at: str | float | None = None) -> list[Sample]:
         """Run an instant query; return one :class:`Sample` per series.
 
         Non-numeric, missing, and non-finite values (Prometheus reports "NaN"
         for "no data") are skipped rather than raising, so a partially-populated
         system still yields whatever is genuinely measurable.
+
+        ``at`` evaluates the query at that moment (RFC 3339 or a unix
+        timestamp) instead of now, which is how a finished run is re-read.
         """
-        data = self._get("/api/v1/query", {"query": query})
+        params = {"query": query}
+        if at is not None:
+            params["time"] = at
+        data = self._get("/api/v1/query", params)
         result = data.get("result", []) if isinstance(data, dict) else []
         samples: list[Sample] = []
         for series in result:

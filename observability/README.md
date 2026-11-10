@@ -36,6 +36,18 @@ Two telemetry halves: **metrics** (Prometheus/Grafana) feed the models;
    your system, typically its API gateway. See [Per-system scrape
    jobs](#per-system-scrape-jobs).
 
+### Keeping everything on this machine
+
+- `OTEL_COLLECTOR_CONFIG=config.local.yaml` in `.env` runs the collector with
+  metrics only: nothing goes to Honeycomb, and no key is needed.
+- If the system under test must not reach the internet at all, make its
+  network `internal: true` in a compose overlay. Such a network publishes no
+  host ports; Prometheus is also attached to this stack's own `default`
+  network, so <http://localhost:9090> (and the analyzer) still work. Run k6
+  on the app network (`[load].docker_network`).
+- Start only what you need: `up -d prometheus otel-collector cadvisor` leaves
+  out Grafana (which checks for updates online) and Beyla.
+
 ## Bring it up (from the repo root)
 
 ```bash

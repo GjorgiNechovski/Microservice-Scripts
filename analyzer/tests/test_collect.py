@@ -399,6 +399,12 @@ def test_render_falls_back_when_unmeasured():
     assert "arrival_rate" in email and "service_rate" in email
     # every service present and parseable
     assert set(parsed["services"]) == set(_SPEC["services"])
+    # a fallback service rate is marked, so it is never read as a latency
+    from analyzer.spec import measured_latency_ms
+    measured = {m.name: m.service_rate is not None for m in rows}
+    for name, p in parsed["services"].items():
+        assert (p.get("service_rate_measured") is False) == (not measured[name])
+        assert (measured_latency_ms(p) is None) == (not measured[name])
 
 
 def test_render_emits_effective_service_rate():
@@ -521,6 +527,24 @@ def test_container_queries_scope_to_compose_project_and_drop_stale():
     prom = _kong_and_cadvisor_prom()
     measure(prom, _SPEC)                         # no project: unscoped, as before
     assert not any("compose_project" in q for q in prom.queries)
+
+
+def test_render_flags_a_floor_rate_and_carries_it_forward():
+    rows = measure(_kong_and_cadvisor_prom(), _SPEC)
+    text = render_measured_toml(_SPEC, rows, effective={"blog-service": 50.0,
+                                                        "user-service": 9.0},
+                                lower_bound={"blog-service"})
+    parsed = tomllib.loads(text)["services"]
+    assert parsed["blog-service"]["service_rate_lower_bound"] is True
+    assert "service_rate_lower_bound" not in parsed["user-service"]
+    # inherited with the rate it qualifies, and only then
+    again = tomllib.loads(render_measured_toml(_SPEC, rows,
+                                               existing=tomllib.loads(text)))
+    assert again["services"]["blog-service"]["service_rate_lower_bound"] is True
+    fresh = tomllib.loads(render_measured_toml(_SPEC, rows,
+                                               existing=tomllib.loads(text),
+                                               effective={"blog-service": 60.0}))
+    assert "service_rate_lower_bound" not in fresh["services"]["blog-service"]
 
 
 def _run_all() -> int:

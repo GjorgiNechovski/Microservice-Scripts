@@ -15,8 +15,8 @@ from __future__ import annotations
 import math
 import sys
 
-from analyzer.spec import (analyze, load_or_default_measurements, load_system,
-                           unmeasured_recovery)
+from analyzer.spec import (analyze, fmt_ms, load_or_default_measurements,
+                           load_system, unmeasured_recovery)
 
 _MIN_YR = 365 * 24 * 60
 
@@ -55,12 +55,29 @@ def report(results: dict, measured_from: str, unmeasured=()) -> None:
 
     # ---- Layer 1: performance -------------------------------------------
     _rule("Layer 1 -- Performance (M/M/c per service)")
-    print(f"{'service':<18}{'c':>3}{'rho':>8}{'W (s)':>10}{'P(wait)':>10}{'stable':>8}")
+    print(f"{'service':<18}{'c':>3}{'rho':>8}{'latency':>10}{'P(wait)':>10}"
+          f"{'stable':>8}")
+    floors = []
     for name, s in results["services"].items():
         q = s.queue
-        w = "inf" if not q.stable else f"{q.W:.3f}"
-        print(f"{name:<18}{s.replicas:>3}{q.rho:>8.3f}{w:>10}"
+        lat = fmt_ms(s.latency_ms)
+        if s.mu_lower_bound:          # rho is an upper bound; stability unknown
+            floors.append(name)
+            print(f"{name:<18}{s.replicas:>3}{'≤' + format(q.rho, '.3f'):>8}{lat:>10}"
+                  f"{'?':>10}{'kept up':>8}")
+            continue
+        print(f"{name:<18}{s.replicas:>3}{q.rho:>8.3f}{lat:>10}"
               f"{q.p_wait:>10.3f}{str(q.stable):>8}")
+    print("  latency = MEASURED mean ms per request at the service (queueing "
+          "included; a caller's")
+    print("  includes its callees'). rho, P(wait) and stable are the M/M/c "
+          "model's; its own")
+    print("  response time is not shown: it assumes a replica serves one "
+          "request at a time.")
+    if floors:
+        print(f"  ≤ = upper bound: the load sweep never saw {', '.join(floors)} "
+              "level off, so")
+        print("  μ is only a floor and the real limit lies above the tested load.")
 
     # ---- Layer 2: reliability -------------------------------------------
     _rule("Layer 2 -- Reliability (CTMC)")
@@ -104,6 +121,9 @@ def report(results: dict, measured_from: str, unmeasured=()) -> None:
 
 
 def main(argv: list) -> int:
+    from analyzer import utf8_stdio
+
+    utf8_stdio()
     if len(argv) != 1:
         print("usage: python3 -m analyzer.run_all <system-spec.toml>",
               file=sys.stderr)

@@ -15,6 +15,7 @@ from analyzer.saturation import (
     capacity_ceiling_explain,
     capacity_ceiling_report,
     estimate_capacity,
+    plateau_level,
     system_supported,
 )
 from analyzer.scaling import LevelResult
@@ -114,6 +115,70 @@ def test_ceiling_explain_is_jargon_free():
     assert "db" in text
     for jargon in ("ρ", "μ", "M/M/c", "utilization"):
         assert jargon not in text, f"jargon leaked: {jargon}"
+
+
+# api: a thread-pool service under a think-time load (as measured on a .NET API).
+# Its throughput keeps pace with the users, 0.59 req/s each, while 1/latency
+# falls far below what one replica demonstrably completes -- so the latency rule
+# alone calls it overloaded from 800 VUs on.
+_CSPEC = {"name": "K", "services": ["api"], "infrastructure": [],
+          "operations": {}}
+_API_LATENCY_MU = {200: 330.0, 400: 280.0, 800: 200.0, 1600: 40.0}
+
+
+def _clevel(vus, lam=None):
+    lam = round(vus * 0.59, 3) if lam is None else lam
+    meas = {"services": {"api": {"replicas": 2, "arrival_rate": lam,
+                                 "service_rate": _API_LATENCY_MU[vus],
+                                 "failure_rate": 0.01, "repair_rate": 100.0}},
+            "infrastructure": {}}
+    return LevelResult(vus, meas, analyze(_CSPEC, meas),
+                       size_services(_CSPEC, meas, _TARGET))
+
+
+_KEPT_PACE = [_clevel(v) for v in (200, 400, 800, 1600)]
+
+
+def test_plateau_level_needs_a_real_drop():
+    assert plateau_level([(100, 10.0), (200, 20.0), (400, 37.0)]) is None  # -7.5%
+    assert plateau_level([(100, 10.0), (200, 20.0), (400, 30.0)]) == 400   # -25%
+    assert plateau_level([(100, 10.0)]) is None                            # no trend
+    assert plateau_level([(50, 0.0), (100, 10.0), (200, 20.0)]) is None    # idle skipped
+
+
+def test_service_that_kept_pace_is_a_floor_not_saturated():
+    api = estimate_capacity(_KEPT_PACE, _CSPEC, _TARGET)["api"]
+    assert api.lower_bound and not api.saturated
+    assert api.method.startswith("lower bound")
+    assert abs(api.mu_clean - 944.0 / 2) < 1e-9       # peak / c, as a floor
+    assert api.replicas_for_peak is None              # nothing sized from it
+    assert api.supported_vus is None and api.top_vus == 1600
+    assert system_supported({"api": api}) == (None, None)
+
+
+def test_service_that_levelled_off_is_still_saturated():
+    levels = [_clevel(200), _clevel(400), _clevel(800), _clevel(1600, lam=500.0)]
+    api = estimate_capacity(levels, _CSPEC, _TARGET)["api"]
+    assert api.saturated and not api.lower_bound
+    assert api.method == "throughput-plateau"
+    assert abs(api.mu_clean - 250.0) < 1e-9
+    assert api.replicas_for_peak == 3                 # ceil(500 / (0.7 * 250))
+
+
+def test_single_level_keeps_the_latency_rule():
+    api = estimate_capacity([_clevel(1600)], _CSPEC, _TARGET)["api"]
+    assert api.saturated and not api.lower_bound      # no trend to read
+
+
+def test_reports_say_the_limit_was_not_reached():
+    text = capacity_ceiling_report(_KEPT_PACE, _CSPEC, _TARGET)
+    assert "≥472.00" in text and "≥1600" in text
+    assert "kept up at every tested level, up to 1600 users" in text
+    assert "Un-poisoned sizing" not in text and "replicas;" not in text
+    plain = capacity_ceiling_explain(_KEPT_PACE, _CSPEC, _TARGET)
+    assert "kept up the whole way" in plain and "up to 1600 users" in plain
+    for jargon in ("ρ", "μ", "M/M/c", "utilization"):
+        assert jargon not in plain, f"jargon leaked: {jargon}"
 
 
 def _run_all() -> int:

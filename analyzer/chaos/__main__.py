@@ -78,6 +78,9 @@ def _print_results(results) -> None:
 
 
 def main(argv=None) -> int:
+    from analyzer import utf8_stdio
+
+    utf8_stdio()
     parser = argparse.ArgumentParser(
         prog="python3 -m analyzer.chaos",
         description="Measure repair_rate/failure_rate by failure injection.")

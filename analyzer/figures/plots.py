@@ -24,6 +24,7 @@ from analyzer.models.queueing import mmc_metrics         # noqa: E402
 from analyzer.spec import (  # noqa: E402
     analyze,
     failure_rate_for,
+    measured_latency_ms,
     unmeasured_recovery,
 )
 
@@ -91,18 +92,23 @@ def fig_utilization(spec, measurements, outdir) -> str:
         mu, c = p.get("service_rate_effective", p["service_rate"]), int(p["replicas"])
         w_ms = [mmc_metrics(rho * c * mu, mu, c).W * 1000.0 for rho in rhos]
         col = _color(i)
-        ax.plot(rhos, w_ms, color=col, lw=1.8, label=name)
+        floor = "service_rate_effective" in p and p.get("service_rate_lower_bound")
+        ax.plot(rhos, w_ms, color=col, lw=1.8, ls="--" if floor else "-",
+                label=f"{name} (μ is a floor: no plateau)" if floor else name)
+        # the dot is what was MEASURED, so its distance from the curve shows
+        # how far the model is off for this service
         rho0 = p["arrival_rate"] / (c * mu)
-        if 0 < rho0 < 1:
-            w0 = mmc_metrics(p["arrival_rate"], mu, c).W * 1000.0
-            ax.plot([rho0], [w0], "o", color=col, ms=6.5,
+        lat = measured_latency_ms(p)
+        if 0 < rho0 < 1 and lat is not None:
+            ax.plot([rho0], [lat], "o", color=col, ms=6.5,
                     mec="white", mew=1.2, zorder=5)
     ax.set_yscale("log")
     ax.set_xlabel("utilization  ρ = λ / (c·μ)")
-    ax.set_ylabel("mean response time  W  (ms, log scale)")
-    ax.set_title("Layer 1 — M/M/c response time vs utilization", pad=12)
+    ax.set_ylabel("mean response time  (ms, log scale)")
+    ax.set_title("Layer 1 — M/M/c model response time vs utilization", pad=12)
     leg = ax.legend(frameon=False, fontsize=8, ncol=2, labelcolor=_INK,
-                    title="dots = measured operating point", title_fontsize=8)
+                    title="lines = model; dots = measured latency at the "
+                          "measured load", title_fontsize=8)
     leg.get_title().set_color(_MUTED)
     return _save(fig, outdir, "layer1_utilization.png")
 
@@ -358,6 +364,13 @@ def fig_scaling_throughput(spec, levels, outdir) -> str:
     return _save(fig, outdir, "scaling_throughput.png")
 
 
+def _floor(levels, name) -> bool:
+    """The sweep never saw ``name`` level off: its mu is a floor, so its rho
+    and W are upper bounds (analyzer.saturation)."""
+    return all(lv.measurements["services"][name].get("service_rate_lower_bound")
+               for lv in levels)
+
+
 def fig_scaling_utilization(spec, levels, target, outdir) -> str:
     """Utilization per service across load (who crosses the target first)."""
     levels = sorted(levels, key=lambda x: x.vus)
@@ -365,8 +378,10 @@ def fig_scaling_utilization(spec, levels, target, outdir) -> str:
     fig, ax = _ax()
     for i, name in enumerate(spec["services"]):
         ys = [lv.results["services"][name].queue.rho for lv in levels]
-        ax.plot(xs, ys, marker="o", ms=5, color=_color(i), lw=1.8, label=name,
-                mec="white", mew=0.8)
+        floor = _floor(levels, name)
+        ax.plot(xs, ys, marker="o", ms=5, color=_color(i), lw=1.8,
+                ls="--" if floor else "-", mec="white", mew=0.8,
+                label=f"{name} (upper bound: no plateau)" if floor else name)
     ax.axhline(target, ls="--", color=_MUTED, lw=1.0)
     ax.text(xs[0], target, " target", fontsize=8, color=_MUTED, va="bottom")
     ax.axhline(1.0, ls=":", color=_color(3), lw=1.1)
@@ -379,26 +394,25 @@ def fig_scaling_utilization(spec, levels, target, outdir) -> str:
 
 
 def fig_scaling_response_time(spec, levels, outdir) -> str:
-    """Mean response time per service across load (the M/M/c hockey stick)."""
+    """MEASURED mean response time per service across load. Not the M/M/c
+    model's W: that assumes one request at a time per replica."""
     levels = sorted(levels, key=lambda x: x.vus)
     xs = [lv.vus for lv in levels]
     fig, ax = _ax()
-    any_stable = False
+    any_measured = False
     for i, name in enumerate(spec["services"]):
-        ys = []
-        for lv in levels:
-            q = lv.results["services"][name].queue
-            ys.append(q.W * 1000.0 if q.stable else np.nan)
+        ys = [lv.results["services"][name].latency_ms for lv in levels]
+        ys = [np.nan if y is None else y for y in ys]
         if np.any(np.isfinite(ys)):
-            any_stable = True
-        ax.plot(xs, ys, marker="o", ms=5, color=_color(i), lw=1.8, label=name,
-                mec="white", mew=0.8)
-    if any_stable:
+            any_measured = True
+        ax.plot(xs, ys, marker="o", ms=5, color=_color(i), lw=1.8,
+                mec="white", mew=0.8, label=name)
+    if any_measured:
         ax.set_yscale("log")
     ax.set_xlabel("offered load  (virtual users)")
-    ax.set_ylabel("mean response time  W  (ms, log scale)")
-    ax.set_title("Load sweep — response time vs load "
-                 "(gap = overloaded / ∞ wait)", pad=12)
+    ax.set_ylabel("measured mean response time  (ms, log scale)")
+    ax.set_title("Load sweep — response time vs load (measured at each "
+                 "service; gap = not measured)", pad=12)
     ax.legend(frameon=False, fontsize=8, ncol=2, labelcolor=_INK)
     return _save(fig, outdir, "scaling_response_time.png")
 
@@ -409,11 +423,15 @@ def fig_scaling_replicas(spec, levels, outdir) -> str:
     xs = [lv.vus for lv in levels]
     fig, ax = _ax()
     for i, name in enumerate(spec["services"]):
-        needed = [lv.sizings[name].needed for lv in levels]
         col = _color(i)
+        current = levels[-1].sizings[name].current
+        if _floor(levels, name):          # limit never reached: nothing to size
+            ax.axhline(current, ls=":", color=col, lw=0.9, alpha=0.7,
+                       label=f"{name} (not sized: no plateau)")
+            continue
+        needed = [lv.sizings[name].needed for lv in levels]
         ax.plot(xs, needed, marker="o", ms=5, color=col, lw=1.8, label=name,
                 mec="white", mew=0.8)
-        current = levels[-1].sizings[name].current
         ax.axhline(current, ls=":", color=col, lw=0.9, alpha=0.7)
     ax.set_xlabel("offered load  (virtual users)")
     ax.set_ylabel("replicas needed  (solid)   vs current  (dotted)")
@@ -424,7 +442,8 @@ def fig_scaling_replicas(spec, levels, outdir) -> str:
 
 def fig_diagnose_quadrant(spec, dr, outdir) -> str:
     """Scale-out vs optimize decision map: request weight (x) vs load (y)."""
-    _V = {"optimize": "#D55E00", "scale": "#0072B2", "ok": "#009E73"}
+    _V = {"optimize": "#D55E00", "scale": "#0072B2", "ok": "#009E73",
+          "hidden": "#CC79A7"}
     fig, ax = _ax(w=7.4, h=4.8)
 
     xs = []
@@ -435,9 +454,16 @@ def fig_diagnose_quadrant(spec, dr, outdir) -> str:
             continue
         xs.append(x)
         y = min(d.peak_utilization, 1.2)          # clamp overloaded dots near the top
-        ax.scatter([x], [y], s=90, color=_V[d.verdict], edgecolor="white",
-                   linewidth=1.2, zorder=5)
-        ax.annotate(name, (x, y), fontsize=7.5, color=_INK,
+        if d.lower_bound:                         # both coordinates are bounds
+            ax.scatter([x], [y], s=90, facecolor="none",
+                       edgecolor=_V[d.verdict], linewidth=1.6, zorder=5)
+            label = f"{name} (≤: limit not reached)"
+        else:
+            ax.scatter([x], [y], s=90, color=_V[d.verdict], edgecolor="white",
+                       linewidth=1.2, zorder=5)
+            label = (f"{name} (hidden limit, not CPU)" if d.verdict == "hidden"
+                     else name)
+        ax.annotate(label, (x, y), fontsize=7.5, color=_INK,
                     xytext=(5, 4), textcoords="offset points")
 
     ax.set_xscale("log")

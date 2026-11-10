@@ -108,6 +108,64 @@ def test_unmeasured_recovery_is_never_called_measured():
     assert not re.search(r"svc: back in .*\(not measured\)", text)
 
 
+def test_a_floor_rate_is_not_called_overloaded():
+    # rho = 5 / (3 * 1/3) = 5 against the floor -> but the sweep saw it keep up
+    spec, meas, _ = _analyze(arrival=5.0, service=1.0)
+    meas["services"]["svc"].update(service_rate_effective=5.0 / 3,
+                                   service_rate_lower_bound=True)
+    res = analyze(spec, meas)
+    assert res["services"]["svc"].mu_lower_bound
+    text = explain(res, spec, meas)
+    assert "kept up with this traffic" in text
+    assert "These are overloaded" not in text and "URGENT" not in text
+
+    import contextlib
+    import io
+
+    from analyzer.run_all import report
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        report(res, "test")
+    assert "kept up" in buf.getvalue() and "False" not in buf.getvalue()
+
+
+def test_users_feeling_the_load_overrides_fast_enough():
+    from analyzer.responsiveness import judge_levels
+    from analyzer.validity import K6Summary
+    spec, meas, res = _analyze()                        # light, keeps up
+    assert "fast enough for its traffic" in explain(res, spec, meas)
+    feel = judge_levels(spec, {100: K6Summary(p95_ms=40.0, failed=0.0),
+                               400: K6Summary(p95_ms=210.0, failed=0.004)})[400]
+    text = explain(res, spec, meas, feel)
+    assert "fast enough" not in text and "needs no fix" not in text
+    assert "keeping up but noticeably slower for its users" in text
+    assert "95 of every 100 responses came back within 210 ms" in text
+    for jargon in ("rho", "utilization", "p95", "M/M/c"):
+        assert jargon not in text, f"jargon leaked: {jargon}"
+
+
+def test_a_level_past_the_sweeps_limit_reads_overloaded():
+    # past the limit the per-level math reads "fine" (failed requests lower the
+    # traffic it divides); the sweep's position must win, and with a hidden
+    # limit it must not prescribe copies
+    from analyzer.diagnose import sweep_position
+    from analyzer.tests.test_diagnose import _TARGET, _plateau_levels
+    spec, levels = _plateau_levels()
+    pos = sweep_position(levels, spec, _TARGET)
+    lv = levels[-1]                                      # 2000 users, past
+    text = explain(lv.results, spec, lv.measurements,
+                   position=pos.at(lv.vus, lv.measurements, spec))
+    assert "past its limit" in text and "turning work away" in text
+    assert "URGENT" not in text and "more capacity for" not in text
+    assert "not because the" in text
+    assert "is past its limit at this load" in text      # the one sentence
+    low = levels[0]
+    text = explain(low.results, spec, low.measurements,
+                   position=pos.at(low.vus, low.measurements, spec))
+    assert "kept up: about 13% of the most the system handled" in text
+    assert "fast enough for its traffic" in text
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

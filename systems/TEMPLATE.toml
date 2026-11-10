@@ -200,6 +200,50 @@ infrastructure = [
 
 
 # =============================================================================
+# OPTIONAL: when do the users feel the load?
+#
+# Besides the capacity math, every load level is judged by what k6 itself
+# measured, end to end: response times and failed requests. A level is
+# "slowing" when its 95th-percentile response time reaches max_p95_ms -- or,
+# without one, p95_factor x the lightest level's p95 and at least
+# p95_floor_ms -- and "failing" when more than max_error_rate of its requests
+# failed. Either one caps the sweep's "highest comfortable load". This matters
+# most with a think-time: throughput keeps pace with the users long after
+# responses have slowed down. A single run has no lighter level to compare
+# with, so only max_p95_ms and max_error_rate apply there.
+# =============================================================================
+# [responsiveness]
+# p95_factor = 3.0            # default
+# p95_floor_ms = 100          # default: below this, never called slow
+# max_p95_ms = 500            # optional fixed budget; replaces the two above
+# max_error_rate = 0.001      # default: 0.1% of requests
+
+
+# =============================================================================
+# OPTIONAL: reading the containers' logs for what ran out.
+#
+# After every load level the analyzer reads each component's `docker logs` over
+# that level's window (read-only) and counts known "ran out" messages: database
+# connection pools (MongoDB, SqlClient, Npgsql, HikariCP, SQLAlchemy, Prisma,
+# Knex), servers refusing connections, Redis clients, worker/thread limits,
+# file handles, memory -- plus timeouts and refused connections as symptoms.
+# The diagnosis names the cause that appears with the failures, which the
+# metrics alone cannot ("hidden limit, not CPU"). Counts go to
+# load-<N>/log-signals.json. For a sweep that ran without it, while its
+# containers still exist:
+#     python3 -m analyzer.logscan systems/<your-system>.toml --out analysis
+#
+# Add messages for a stack it doesn't know; kind is one of db-pool, db-server,
+# cache-pool, threads, os-limit, memory (causes) or timeout, refused (symptoms).
+# =============================================================================
+# [logs]
+# scan = true                 # default; false skips reading logs
+# extra = [
+#   { key = "my-pool", kind = "db-pool", pattern = "no free connection in pool" },
+# ]
+
+
+# =============================================================================
 # WHAT THE ANALYZER NEEDS TO SEE (metrics prerequisites)
 #
 # Every number is measured from Prometheus. You need THREE things scraped; the
@@ -257,6 +301,10 @@ infrastructure = [
 #                           c * mu -- departures are not inflated by queueing,
 #                           only latency is. This is the trustworthy one, and
 #                           the analysis prefers it whenever it is present.
+#   service_rate_lower_bound  true when the sweep never saw the throughput
+#                           level off: the effective rate is then only a
+#                           floor (the limit is above the tested load), and
+#                           nothing is sized from it.
 #
 # This is why a load SWEEP beats a single run: without watching throughput
 # across levels there is no way to tell a saturated service from a slow one.

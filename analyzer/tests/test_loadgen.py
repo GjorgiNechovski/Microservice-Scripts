@@ -96,14 +96,15 @@ def _spec_with_script(tmp, rel):
 
 
 def test_resolve_script_is_relative_to_the_spec_not_the_cwd():
-    spec = os.path.join(os.sep, "elsewhere", "systems", "app.toml")
+    # abspath: on Windows a rooted path only becomes absolute with a drive
+    # letter, which resolve_script adds; the expectation must carry it too.
+    spec = os.path.abspath(os.path.join(os.sep, "elsewhere", "systems", "app.toml"))
     got = resolve_script("app/load.js", spec)
-    assert got == os.path.normpath(os.path.join(os.sep, "elsewhere", "systems",
-                                                "app", "load.js"))
+    assert got == os.path.join(os.path.dirname(spec), "app", "load.js")
 
 
 def test_resolve_script_keeps_absolute_paths():
-    absolute = os.path.join(os.sep, "opt", "load.js")
+    absolute = os.path.abspath(os.path.join(os.sep, "opt", "load.js"))
     assert resolve_script(absolute, "/any/spec.toml") == absolute
 
 
