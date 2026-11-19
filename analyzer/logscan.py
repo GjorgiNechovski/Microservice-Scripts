@@ -199,15 +199,16 @@ def scan_level(spec, since, until, docker=None, read=docker_log_lines) -> dict:
     """Scan every spec component's containers over ``[since, until]`` (unix
     seconds). Returns the record saved as ``log-signals.json``."""
     from analyzer.chaos.dockercli import Docker, DockerError
-    from analyzer.chaos.injector import component_to_service, containers_of
+    from analyzer.chaos.injector import containers_of
+    from analyzer.spec import container_targets
 
     docker = docker or Docker()
     sigs = signatures_for(spec)
     record = {"since": int(since), "until": int(until), "components": {},
               "errors": {}}
-    for comp, svc in component_to_service(spec).items():
+    for comp, (svc, project) in container_targets(spec).items():
         try:
-            names = containers_of(spec, docker, svc)
+            names = containers_of(spec, docker, svc, project)
         except DockerError as exc:
             record["errors"][comp] = str(exc)
             continue

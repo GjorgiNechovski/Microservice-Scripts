@@ -547,6 +547,52 @@ def test_render_flags_a_floor_rate_and_carries_it_forward():
     assert "service_rate_lower_bound" not in fresh["services"]["blog-service"]
 
 
+_PROJECT = "container_label_com_docker_compose_project"
+_SHOP = {"services": ["catalog", "orders"],
+         "infrastructure": ["catalog-db", "orders-db"],
+         "compose_project": ["shop-catalog", "shop-orders"],
+         "containers": {"catalog-db": {"project": "shop-catalog", "service": "db"},
+                        "orders-db": {"project": "shop-orders", "service": "db"}}}
+
+
+def test_an_app_over_several_projects_counts_each_services_containers():
+    seen = [("catalog", "shop-catalog", 3.0), ("orders", "shop-orders", 2.0),
+            ("db", "shop-catalog", 1.0), ("db", "shop-orders", 1.0)]
+    prom = FakePrometheus(
+        ["container_last_seen", "container_cpu_usage_seconds_total"],
+        [("container_last_seen",
+          [Sample({_COMPOSE: s, _PROJECT: p}, v) for s, p, v in seen]),
+         ("container_cpu_usage_seconds_total",
+          [Sample({_COMPOSE: s, _PROJECT: p}, v / 10) for s, p, v in seen])],
+        {})
+    got = {m.name: m for m in measure(prom, _SHOP)}
+    assert got["catalog"].replicas == 3 and got["orders"].replicas == 2
+    assert abs(got["orders"].cpu_cores_total - 0.2) < 1e-9
+    cadvisor = [q for q in prom.queries if "container_" in q]
+    assert cadvisor and all('=~"shop-catalog|shop-orders"' in q for q in cadvisor)
+    assert all(f"by ({_COMPOSE}, {_PROJECT}" in q for q in cadvisor)
+
+
+def test_a_pinned_component_reads_only_its_projects_history():
+    prom = FakePrometheus(
+        ["container_start_time_seconds"],
+        [("container_start_time_seconds",
+          [Sample({_COMPOSE: "db", _PROJECT: "shop-orders"}, 2.0)])], {})
+    rates = measure_failure_rates(prom, _SHOP, window="2h")
+    assert rates["orders-db"] == 1.0 and rates["catalog-db"] is None
+
+
+def test_a_renamed_service_keeps_its_replica_count():
+    # [containers] maps blog-service to the compose service "blog"; the replica
+    # count used to be looked up under the spec name and came back empty
+    prom = FakePrometheus(["container_last_seen"],
+                          [("container_last_seen", [Sample({_COMPOSE: "blog"}, 4.0)])],
+                          {})
+    spec = {**_SPEC, "containers": {"blog-service": "blog"}}
+    got = {m.name: m for m in measure(prom, spec)}
+    assert got["blog-service"].replicas == 4
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

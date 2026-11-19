@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import math
 
-from analyzer.spec import (_validate_system, analyze, default_measurements,
+from analyzer.spec import (_validate_system, analyze, compose_projects,
+                           container_target, default_measurements,
                            failure_rate_for, infra_instances,
                            unmeasured_recovery)
 
@@ -197,6 +198,37 @@ def test_compose_project_must_be_a_name():
         except ValueError:
             continue
         raise AssertionError(f"accepted compose_project={bad!r}")
+
+
+def _rejects(spec, what):
+    try:
+        _validate_system(spec)
+    except ValueError:
+        return
+    raise AssertionError(f"accepted {what}")
+
+
+def test_an_app_split_over_several_projects():
+    # one compose project per repository; both happen to call their database "db"
+    base = {"services": ["catalog", "orders"],
+            "infrastructure": ["catalog-db", "orders-db"], "operations": {}}
+    spec = {**base, "compose_project": ["shop-catalog", "shop_orders"],
+            "containers": {"catalog-db": {"project": "shop-catalog", "service": "db"},
+                           "orders-db": {"project": "shop_orders", "service": "db"}}}
+    _validate_system(spec)
+    assert compose_projects(spec) == ["shop-catalog", "shop_orders"]
+    assert compose_projects({"compose_project": "one"}) == ["one"]
+    assert compose_projects({}) == []
+    assert container_target(spec, "orders-db") == ("db", "shop_orders")
+    assert container_target(spec, "catalog") == ("catalog", None)
+    for bad in ([], ["a", "a"], ["Has Space"], ["UPPER"], ["-leading"], [3]):
+        _rejects({**base, "compose_project": bad}, f"compose_project={bad!r}")
+    for bad in ({"orders-db": {"project": "elsewhere", "service": "db"}},
+                {"orders-db": {"service": ""}}, {"orders-db": {"project": "shop_orders"}},
+                {"orders-db": 5}, {"orders-db": {"service": "db", "host": "x"}}):
+        _rejects({**spec, "containers": bad}, f"[containers] {bad!r}")
+    # a pin needs no compose_project list of its own
+    _validate_system({**base, "containers": {"orders-db": {"project": "x", "service": "db"}}})
 
 
 def _run_all() -> int:

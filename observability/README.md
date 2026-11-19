@@ -31,7 +31,9 @@ Two telemetry halves: **metrics** (Prometheus/Grafana) feed the models;
      settings → API Keys (the free tier is plenty).
    - `APP_NETWORK`: the network your app's containers run on. Find it with
      `docker network ls`; a compose network without an explicit `name:` is
-     called `<project>_<network>`, e.g. `myapp_default`.
+     called `<project>_<network>`, e.g. `myapp_default`. An app run as several
+     compose projects (one per repository) needs them all on one shared
+     network, which is the one to give here.
 3. Optionally set `SCRAPE_DIR` to a folder of extra Prometheus scrape jobs for
    your system, typically its API gateway. See [Per-system scrape
    jobs](#per-system-scrape-jobs).

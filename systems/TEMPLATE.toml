@@ -37,6 +37,12 @@ infrastructure = [
 # of your replicas, and fault injection refuses to run until you set this.
 # Find the name with `docker compose ls` (by default, your app's directory name).
 # compose_project = "my-app"
+#
+# An app whose services live in several repositories usually runs as several
+# compose projects, one per repository. List them all:
+# compose_project = ["shop-catalog", "shop-orders", "shop-platform"]
+# Its projects must share one docker network (they need it to reach each
+# other by name anyway); that network is APP_NETWORK in observability/.env.
 
 # --- Operations you care about, and the components each one needs. -----------
 # This drives every availability figure: an operation is "up" only while ALL
@@ -52,6 +58,10 @@ infrastructure = [
 # [containers]
 #   Only where a component's name above differs from its compose service name.
 # api-gateway = "kong"
+#   With several compose projects, two of them may have a service of the same
+#   name (each repository its own "db"). Pin each component to its project:
+# catalog-db = { project = "shop-catalog", service = "db" }
+# orders-db  = { project = "shop-orders",  service = "db" }
 #
 # [readiness]
 #   For fault injection. A component with a docker healthcheck counts as

@@ -38,6 +38,7 @@ from analyzer.collect.collector import (
     _FALLBACK_SERVICE,
     _fmt,
 )
+from analyzer.spec import compose_projects, container_targets
 
 
 # ----------------------------------------------------------------------------
@@ -50,36 +51,46 @@ def component_to_service(spec: dict) -> dict:
     Identity by default; the optional ``[containers]`` table overrides names
     that differ (e.g. this system's ``kong`` -> ``api-gateway``).
     """
-    overrides = spec.get("containers", {})
-    components = list(spec["services"]) + list(spec.get("infrastructure", []))
-    return {comp: overrides.get(comp, comp) for comp in components}
+    return {comp: svc for comp, (svc, _) in container_targets(spec).items()}
 
 
-def containers_of(spec: dict, docker: Docker, compose_service: str) -> list:
+def containers_of(spec: dict, docker: Docker, compose_service: str,
+                  project: str | None = None) -> list:
     """This system's containers for one compose service.
 
-    Scoped to the spec's ``compose_project`` when it sets one. Without it, a
-    service name that two compose projects on the host share would match both,
-    and fault injection would stop the other project's container; that case is
-    refused rather than guessed.
+    ``project`` is the one the component is pinned to in ``[containers]``.
+    Otherwise the match is scoped to the spec's ``compose_project``: one
+    project, or the one of several that has the service. A service name that
+    two projects share would match both, and fault injection would stop the
+    other project's container; that case is refused rather than guessed.
     """
-    project = spec.get("compose_project")
     if project:
         return docker.containers_for(compose_service, project=project)
-    projects = docker.projects_for(compose_service)
-    if len(projects) > 1:
+    listed = compose_projects(spec)
+    if len(listed) == 1:
+        return docker.containers_for(compose_service, project=listed[0])
+    found = set(docker.projects_for(compose_service))
+    if listed:
+        found &= set(listed)
+    if len(found) > 1:
+        fix = ("pin the component to one of them in [containers], e.g. "
+               f'{{ project = "{sorted(found)[0]}", service = '
+               f'"{compose_service}" }}' if listed else
+               "set compose_project in the spec so only this system's "
+               "containers are touched (find it with `docker compose ls`)")
         raise DockerError(
             f"compose service '{compose_service}' has containers in "
-            f"{len(projects)} compose projects ({', '.join(sorted(projects))}); "
-            "set compose_project in the spec so only this system's containers "
-            "are touched (find it with `docker compose ls`)")
+            f"{len(found)} compose projects ({', '.join(sorted(found))}); {fix}")
+    if listed:
+        return (docker.containers_for(compose_service, project=found.pop())
+                if found else [])
     return docker.containers_for(compose_service)
 
 
 def resolve_containers(spec: dict, docker: Docker) -> dict:
     """component -> [container names] for everything in the spec."""
-    return {comp: containers_of(spec, docker, svc)
-            for comp, svc in component_to_service(spec).items()}
+    return {comp: containers_of(spec, docker, svc, project)
+            for comp, (svc, project) in container_targets(spec).items()}
 
 
 # ----------------------------------------------------------------------------
@@ -106,9 +117,9 @@ class ComponentPlan:
 def plan(spec: dict, docker: Docker) -> list:
     """Describe what injection *would* do, without touching anything."""
     plans = []
-    for comp, svc in component_to_service(spec).items():
+    for comp, (svc, project) in container_targets(spec).items():
         try:
-            containers = containers_of(spec, docker, svc)
+            containers = containers_of(spec, docker, svc, project)
         except DockerError as exc:
             plans.append(ComponentPlan(comp, svc, [], 0, "?", False, True,
                                        note=f"docker error: {exc}"))
@@ -384,9 +395,9 @@ def verify_recovered(docker: Docker, spec: dict, timeout: float = 60.0,
     instead of silently producing meaningless numbers.
     """
     report = RecoveryReport()
-    for comp, svc in component_to_service(spec).items():
+    for comp, (svc, project) in container_targets(spec).items():
         try:
-            containers = containers_of(spec, docker, svc)
+            containers = containers_of(spec, docker, svc, project)
         except DockerError:
             containers = []
         if not containers:

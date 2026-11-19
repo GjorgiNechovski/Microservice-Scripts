@@ -22,6 +22,7 @@ TOML is read with the standard-library ``tomllib`` (no third-party deps).
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 
@@ -30,6 +31,9 @@ from analyzer.models.queueing import mmc_metrics
 from analyzer.models.rbd import Component, System, parallel, series
 
 _MINUTES_PER_YEAR = 365 * 24 * 60
+
+# Docker Compose's own rule for a project name.
+_PROJECT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 # Placeholder measurements used when no measured file exists yet (i.e. before the
 # measurement phases have run). Deliberately uniform so it is obvious they are
@@ -66,9 +70,34 @@ def _validate_system(spec: dict) -> None:
                     f"operation '{op}' needs unknown component '{comp}' "
                     f"(add it to 'services' or 'infrastructure')")
     project = spec.get("compose_project")
-    if project is not None and (not isinstance(project, str) or not project):
-        raise ValueError("compose_project must be the compose project name "
-                         "(a non-empty string; see `docker compose ls`)")
+    if project is not None:
+        names = [project] if isinstance(project, str) else project
+        if (not isinstance(names, list) or not names
+                or not all(isinstance(n, str) and _PROJECT_NAME.match(n)
+                           for n in names)
+                or len(set(names)) != len(names)):
+            raise ValueError(
+                "compose_project must be the compose project name, or a list "
+                "of them for an app split over several projects (lowercase "
+                "letters, digits, '-' and '_'; see `docker compose ls`)")
+    listed = set(compose_projects(spec))
+    for comp, target in spec.get("containers", {}).items():
+        if isinstance(target, str) and target:
+            continue
+        if not isinstance(target, dict) or set(target) - {"service", "project"} \
+                or not isinstance(target.get("service"), str) \
+                or not target["service"]:
+            raise ValueError(
+                f"[containers].{comp} must be a compose service name, or "
+                '{ service = "...", project = "..." }')
+        pin = target.get("project")
+        if pin is not None and (not isinstance(pin, str)
+                                or not _PROJECT_NAME.match(pin)):
+            raise ValueError(f"[containers].{comp}: project must be a compose "
+                             "project name")
+        if pin is not None and listed and pin not in listed:
+            raise ValueError(f"[containers].{comp}: project '{pin}' is not in "
+                             "compose_project")
     infra = set(spec.get("infrastructure", []))
     for comp, n in spec.get("instances", {}).items():
         if comp not in infra:
@@ -78,6 +107,38 @@ def _validate_system(spec: dict) -> None:
         if not isinstance(n, int) or n < 1:
             raise ValueError(
                 f"[instances].{comp} must be an integer >= 1, got {n!r}")
+
+
+def compose_projects(spec: dict) -> list:
+    """The compose project(s) the system runs as; [] when the spec names none.
+
+    ``compose_project`` is one name, or a list of them for an app whose
+    services live in several repositories, each started as its own project.
+    """
+    project = spec.get("compose_project")
+    if project is None:
+        return []
+    return [project] if isinstance(project, str) else list(project)
+
+
+def container_target(spec: dict, component: str) -> tuple:
+    """``(compose service, compose project or None)`` for one component.
+
+    Identity by default. ``[containers]`` maps a component to a compose
+    service of another name (``kong = "api-gateway"``), or pins it to one
+    project (``orders-db = { project = "orders", service = "db" }``) when
+    several projects of the app have a service of that name.
+    """
+    target = spec.get("containers", {}).get(component, component)
+    if isinstance(target, dict):
+        return target["service"], target.get("project")
+    return target, None
+
+
+def container_targets(spec: dict) -> dict:
+    """component -> (compose service, project or None), for every component."""
+    components = list(spec["services"]) + list(spec.get("infrastructure", []))
+    return {comp: container_target(spec, comp) for comp in components}
 
 
 def infra_instances(spec: dict) -> dict:

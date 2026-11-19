@@ -54,7 +54,8 @@ python3 -m analyzer.run_all systems/finki-blogger.toml
    shared infrastructure, and which components each user operation needs. Names
    only, no numbers. Set `compose_project` to your compose project's name
    (`docker compose ls`), so another app on the same machine is never counted
-   or stopped. The spec can live anywhere, including your own project.
+   or stopped; an app split over several repositories lists each of its
+   projects. The spec can live anywhere, including your own project.
 2. **Make per-service request metrics available.** The analyzer needs a request
    counter and a latency histogram for every service, labelled with the
    service's compose name. Either a gateway exports them per upstream (add a

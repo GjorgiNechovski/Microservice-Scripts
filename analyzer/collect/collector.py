@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from analyzer.collect.promql import Prometheus, PrometheusError, Sample
+from analyzer.spec import compose_projects, container_target, container_targets
 
 # Request counter -- first that exists wins. Two families are understood:
 #   * Kong gateway counters (names vary across Kong versions), and
@@ -188,20 +189,52 @@ def _container_selector(spec: dict) -> str:
 
     Every compose container on the host carries the service label; the spec's
     ``compose_project`` narrows that to this system, so another project's
-    ``redis`` is not counted as one of its replicas.
+    ``redis`` is not counted as one of its replicas. Several projects (an app
+    split over repositories) match as one regex; compose's own naming rule,
+    which the spec enforces, leaves nothing in a name to escape.
     """
     sel = f'{_COMPOSE_LABEL}!=""'
-    project = spec.get("compose_project")
-    if project:
-        sel += f',{_PROJECT_LABEL}="{project}"'
+    projects = compose_projects(spec)
+    if len(projects) == 1:
+        sel += f',{_PROJECT_LABEL}="{projects[0]}"'
+    elif projects:
+        sel += f',{_PROJECT_LABEL}=~"{"|".join(projects)}"'
     return sel
+
+
+def _split_by_project(spec: dict) -> bool:
+    """Whether cAdvisor series must be told apart by project as well as by
+    service: the app runs as several projects, or a component is pinned to
+    one. Otherwise the queries stay exactly as they were."""
+    return len(compose_projects(spec)) > 1 or any(
+        project for _, project in container_targets(spec).values())
+
+
+def _by_target(samples: list[Sample], split: bool) -> dict:
+    """{(compose service, project or None): value}."""
+    out: dict = {}
+    for s in samples:
+        svc = s.labels.get(_COMPOSE_LABEL)
+        if svc:
+            key = (svc, s.labels.get(_PROJECT_LABEL) if split else None)
+            out[key] = out.get(key, 0.0) + s.value
+    return out
+
+
+def _for_target(values: dict, target: tuple):
+    """``(value, projects it came from)`` for one component: its pinned
+    project's value, else the sum over every project with that service."""
+    svc, pin = target
+    hits = {p: v for (s, p), v in values.items()
+            if s == svc and (pin is None or p == pin)}
+    if not hits:
+        return None, set()
+    return sum(hits.values()), {p for p in hits if p}
 
 
 def _component_compose_map(spec: dict) -> dict:
     """component -> compose service, honoring the optional [containers] table."""
-    overrides = spec.get("containers", {})
-    components = list(spec["services"]) + list(spec.get("infrastructure", []))
-    return {comp: overrides.get(comp, comp) for comp in components}
+    return {comp: svc for comp, (svc, _) in container_targets(spec).items()}
 
 
 def measure_failure_rates(prom: Prometheus, spec: dict,
@@ -218,24 +251,28 @@ def measure_failure_rates(prom: Prometheus, spec: dict,
     """
     hours = _window_hours(window)
     names = set(prom.metric_names())
-    result = {comp: None for comp in _component_compose_map(spec)}
+    targets = container_targets(spec)
+    result = {comp: None for comp in targets}
     if hours <= 0 or _START_TIME_METRIC not in names:
         return result
 
-    restarts = _by_label(prom.instant(
-        f"sum by ({_COMPOSE_LABEL})(changes({_START_TIME_METRIC}"
-        f'{{{_container_selector(spec)}}}[{window}]))'), _COMPOSE_LABEL)
+    split = _split_by_project(spec)
+    by = f"{_COMPOSE_LABEL}, {_PROJECT_LABEL}" if split else _COMPOSE_LABEL
+    restarts = _by_target(prom.instant(
+        f"sum by ({by})(changes({_START_TIME_METRIC}"
+        f'{{{_container_selector(spec)}}}[{window}]))'), split)
     ooms = {}
     if _OOM_METRIC in names:
-        ooms = _by_label(prom.instant(
-            f"sum by ({_COMPOSE_LABEL})(increase({_OOM_METRIC}"
-            f'{{{_container_selector(spec)}}}[{window}]))'), _COMPOSE_LABEL)
+        ooms = _by_target(prom.instant(
+            f"sum by ({by})(increase({_OOM_METRIC}"
+            f'{{{_container_selector(spec)}}}[{window}]))'), split)
 
-    for comp, svc in _component_compose_map(spec).items():
-        if svc not in restarts and svc not in ooms:
+    for comp, target in targets.items():
+        restarted, _ = _for_target(restarts, target)
+        oomed, _ = _for_target(ooms, target)
+        if restarted is None and oomed is None:
             continue  # no series at all -> leave as None (unmeasured)
-        events = restarts.get(svc, 0.0) + ooms.get(svc, 0.0)
-        result[comp] = events / hours
+        result[comp] = ((restarted or 0.0) + (oomed or 0.0)) / hours
     return result
 
 
@@ -364,25 +401,32 @@ def measure(prom: Prometheus, spec: dict, window: str = "5m",
     cpu: dict = {}
     if has_cadvisor:
         sel = _container_selector(spec)
-        rq = (f"count by ({_COMPOSE_LABEL})(group by ({_COMPOSE_LABEL}, name)"
+        split = _split_by_project(spec)
+        by = f"{_COMPOSE_LABEL}, {_PROJECT_LABEL}" if split else _COMPOSE_LABEL
+        rq = (f"count by ({by})(group by ({by}, name)"
               f"(container_last_seen{{{sel}}} > time() - {_SEEN_WITHIN_S}))")
-        replicas = {k: int(round(v))
-                    for k, v in _by_label(_instant(prom, rq, at),
-                                          _COMPOSE_LABEL).items()}
-        cq = (f"sum by ({_COMPOSE_LABEL})(rate("
+        replicas = _by_target(_instant(prom, rq, at), split)
+        cq = (f"sum by ({by})(rate("
               f"container_cpu_usage_seconds_total{{{sel}}}[{window}]))")
-        cpu = _by_label(_instant(prom, cq, at), _COMPOSE_LABEL)
+        cpu = _by_target(_instant(prom, cq, at), split)
 
     results: list[Measurement] = []
     for name in spec["services"]:
+        target = container_target(spec, name)
         m = Measurement(name)
-        m.replicas = replicas.get(name)
+        count, projects = _for_target(replicas, target)
+        m.replicas = int(round(count)) if count is not None else None
         m.arrival_rate = lam.get(name)
         m.service_rate = mu.get(name)
-        m.cpu_cores_total = cpu.get(name)
+        m.cpu_cores_total = _for_target(cpu, target)[0]
 
         if m.replicas is None:
             m.notes.append("replicas not measured (no cAdvisor series)")
+        elif len(projects) > 1:
+            m.notes.append(
+                f"replicas counted across {len(projects)} compose projects "
+                f"({', '.join(sorted(projects))}) that all have a "
+                f"'{target[0]}': pin it to one in [containers]")
         # A rate needs at least two scrapes of a counter, so a service whose
         # metrics appeared seconds ago reads as unmeasured even though
         # --discover already lists it. Say so: otherwise the two outputs

@@ -407,6 +407,31 @@ def test_render_clears_placeholder_mark_only_for_timed_components():
     assert unmeasured_recovery(_SPEC, parsed) == ["kong"]
 
 
+def test_an_app_over_several_projects_finds_each_service_where_it_lives():
+    # this app runs as projects "app" and "other", and both have a blog-service:
+    # refused with a hint to pin it, then resolved once pinned
+    spec = {**_SPEC, "compose_project": ["app", "other"]}
+    try:
+        resolve_containers(spec, _two_projects())
+    except DockerError as exc:
+        assert "[containers]" in str(exc) and "other" in str(exc)
+    else:
+        raise AssertionError("guessed between two projects of the app")
+    pinned = {**spec, "containers": {**_SPEC["containers"], "blog-service": {
+        "project": "other", "service": "blog-service"}}}
+    got = resolve_containers(pinned, _two_projects())
+    assert got["blog-service"] == ["other-blog-service-1"]
+    assert got["kong"] == ["api-gateway-1"]          # only one project has it
+
+
+def test_listed_projects_leave_other_apps_alone():
+    # "other" is not one of this app's projects, so its blog-service is ignored
+    spec = {**_SPEC, "compose_project": ["app", "third"]}
+    got = resolve_containers(spec, _two_projects())
+    assert got["blog-service"] == ["blog-service-1", "blog-service-2",
+                                   "blog-service-3"]
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

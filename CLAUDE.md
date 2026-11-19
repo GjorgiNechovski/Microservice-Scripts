@@ -47,7 +47,9 @@ Read their compose file(s) and Dockerfiles. Note:
   (see step 7).
 
 Once their app is up, `docker network ls` gives the network name and
-`docker compose ls` the compose project name; you need both.
+`docker compose ls` the compose project name; you need both. An app split over
+several repositories usually runs as several compose projects, one per
+repository; `docker compose ls` lists each with its compose files.
 
 ### 2. Decide where per-service request rate and latency come from
 
@@ -129,7 +131,10 @@ repo too.
 
 - `compose_project`: their compose project name. Set it. Containers are found by
   compose service name, so without it another project's `redis` on the same
-  machine is counted as a replica, and fault injection refuses to run.
+  machine is counted as a replica, and fault injection refuses to run. For an
+  app split over several projects, list them all; where two of them have a
+  service of the same name (each repository its own `db`), pin each component
+  in `[containers]`: `orders-db = { project = "shop-orders", service = "db" }`.
 - `services`: the application tiers you want queueing analysis for. Each needs
   metrics from step 2.
 - `infrastructure`: shared components (gateway, databases, broker, cache).
@@ -174,7 +179,9 @@ minutes.
 
 ### 5. Bring everything up
 
-1. **Their app first.** It creates the network the stack joins.
+1. **Their app first.** It creates the network the stack joins. An app run as
+   several compose projects must have all of them on one shared network
+   (usually an external one each project joins); that network is `APP_NETWORK`.
 2. `cp observability/.env.example observability/.env`, then set `APP_NETWORK`,
    `SCRAPE_DIR` if you wrote a gateway job, and `HONEYCOMB_API_KEY` from the
    human. Without a key yet, a placeholder still lets metrics flow, which is all
@@ -366,7 +373,7 @@ a wrong URL fails every request at any load.
 | *lambda not measured* right after setup | counters too new; drive traffic a minute and retry |
 | stack won't start: `APP_NETWORK` missing | `observability/.env` not filled in, or the app isn't up yet |
 | can't rebuild their app: network has active endpoints | the stack is attached to it; stop the stack first |
-| `compose service 'x' has containers in N compose projects` | another project on the machine has a service of that name; set `compose_project` in the spec |
+| `compose service 'x' has containers in N compose projects` | another project on the machine has a service of that name; set `compose_project` in the spec. If both projects belong to the app, pin the component in `[containers]` instead |
 | replica count too high just after scaling down | a removed container counts for about 60 s; wait a minute |
 | new replicas get no traffic, or 502s after a rebuild | an nginx gateway caches upstream addresses; restart it |
 | report says recovery NOT MEASURED | fault injection didn't run (expected with `--skip-chaos`); the availability figures are placeholders |

@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 from analyzer.logscan import KINDS, findings
 from analyzer.saturation import _rows, estimate_capacity, plateau_level
+from analyzer.spec import container_target
 
 # The machine had CPU to spare if all its containers together used at most this
 # share of its cores at the level where throughput peaked. The validity check
@@ -110,10 +111,8 @@ def hidden_limit(levels, spec, caps) -> HiddenLimit | None:
     used = sum(v.cpu_by_service.values())
     if used > _HIDDEN_HOST_SHARE * v.host_cores:
         return None
-    compose = spec.get("containers", {})
-
     def cores(lv, n):
-        return lv.validity.cpu_by_service.get(compose.get(n, n), 0.0)
+        return lv.validity.cpu_by_service.get(container_target(spec, n)[0], 0.0)
 
     cpu = {n: (cores(top, n), int(top.measurements["services"][n]["replicas"]))
            for n in spec["services"]}
