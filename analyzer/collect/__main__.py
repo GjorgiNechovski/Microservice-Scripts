@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -56,6 +57,21 @@ def _print_discovery(disc) -> None:
     print("\n" + ("Ready to measure. Re-run without --discover (add --write to "
                   "save)." if ready else
                   "Not all sources are available yet -- see notes above."))
+
+
+def discovery_json(disc) -> dict:
+    """What ``--discover --json`` prints: the same facts, for the setup app."""
+    return {
+        "metric_count": disc.metric_count,
+        "request_metric": disc.request_metric,
+        "latency_metric": disc.latency.sum_metric if disc.latency else None,
+        "has_cadvisor": disc.has_cadvisor,
+        "service_label": disc.service_label,
+        "traffic_services": list(disc.traffic_services),
+        "compose_services": list(disc.compose_services),
+        "notes": list(disc.notes),
+        "ready": bool(disc.request_metric and disc.latency and disc.has_cadvisor),
+    }
 
 
 def _print_measurements(rows, window) -> None:
@@ -102,6 +118,9 @@ def main(argv=None) -> int:
                         help="HTTP timeout seconds (default: %(default)s)")
     parser.add_argument("--discover", action="store_true",
                         help="only report what can be measured, then exit")
+    parser.add_argument("--json", action="store_true",
+                        help="with --discover: print the report as one JSON "
+                             "object (for the setup app)")
     parser.add_argument("--failures", action="store_true",
                         help="report observed failure_rate/h (restart+OOM "
                              "history) per component, then exit")
@@ -125,7 +144,11 @@ def main(argv=None) -> int:
 
     try:
         if args.discover:
-            _print_discovery(discover(prom, spec))
+            disc = discover(prom, spec)
+            if args.json:
+                print(json.dumps(discovery_json(disc)))
+            else:
+                _print_discovery(disc)
             return 0
 
         if args.failures:
@@ -177,6 +200,8 @@ def main(argv=None) -> int:
                   ".measured.toml)")
         return 0
     except PrometheusError as exc:
+        if args.discover and args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

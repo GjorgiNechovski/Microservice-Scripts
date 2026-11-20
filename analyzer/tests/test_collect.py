@@ -312,6 +312,15 @@ def test_discover_reports_sources_and_gaps():
     assert any("email-service" in n for n in disc.notes)
 
 
+def test_discover_json_carries_the_same_facts():
+    from analyzer.collect.__main__ import discovery_json
+    import json
+    out = discovery_json(discover(_kong_and_cadvisor_prom(), _SPEC))
+    assert json.loads(json.dumps(out)) == out          # plain JSON, nothing else
+    assert out["has_cadvisor"] is True
+    assert out["ready"] == bool(out["request_metric"] and out["latency_metric"])
+
+
 def test_discover_flags_missing_stack():
     empty = FakePrometheus(["up"], [], {})
     disc = discover(empty, _SPEC)
