@@ -7,6 +7,7 @@ venv/
 
 # Secrets (Honeycomb API key etc.) -- never commit
 observability/.env
+observability/.env.*.bak
 .env
 
 # Analyzer output: regenerate with `python3 -m analyzer <spec>`
@@ -19,3 +20,10 @@ analyzer/docs/
 
 # finki example: internal note on its per-service instrumentation
 systems/finki-blogger/INSTRUMENTATION.md
+
+# Setup app (ui/): dependencies and build output
+ui/frontend/node_modules/
+ui/backend/wwwroot/
+ui/**/bin/
+ui/**/obj/
+*.tsbuildinfo

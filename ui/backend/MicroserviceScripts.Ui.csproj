@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MicroserviceScripts.Ui</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Known infrastructure images: data, so anyone can extend it without code. -->
+    <None Update="Data\infrastructure-images.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- How web frameworks declare routes: data as well. -->
+    <None Update="Data\route-patterns.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Example values for request types, across languages. -->
+    <None Update="Data\request-types.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The built web page is served from the source folder (RepoLocation.WebRoot). -->
+    <Content Remove="wwwroot\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+</Project>
