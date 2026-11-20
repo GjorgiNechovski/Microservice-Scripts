@@ -231,6 +231,34 @@ def test_an_app_split_over_several_projects():
     _validate_system({**base, "containers": {"orders-db": {"project": "x", "service": "db"}}})
 
 
+def test_check_command_reports_valid_and_invalid_specs():
+    import contextlib
+    import io
+    import json
+    import os
+    import tempfile
+
+    from analyzer.spec import main
+
+    d = tempfile.mkdtemp()
+
+    def check(text):
+        path = os.path.join(d, "s.toml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main([path, "--json"])
+        return rc, json.loads(out.getvalue())
+
+    rc, v = check('name = "x"\ncompose_project = ["a", "b"]\nservices = ["s"]\n')
+    assert rc == 0 and v["ok"] and v["compose_projects"] == ["a", "b"]
+    rc, v = check('name = "x"\nservices = []\n')
+    assert rc == 1 and not v["ok"] and "services" in v["error"]
+    rc, v = check('name = "x\n')                          # broken TOML
+    assert rc == 1 and not v["ok"]
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

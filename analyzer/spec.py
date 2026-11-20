@@ -413,3 +413,49 @@ def analyze(spec: dict, measurements: dict) -> dict:
         "infra_instances": instances,
         "top_events": top_results,
     }
+
+
+def main(argv=None) -> int:
+    """Check a spec without running anything: ``python3 -m analyzer.spec <spec>``.
+
+    Exit 0 when it loads and validates. ``--json`` prints the verdict as one
+    JSON object, which is what the setup app in ``ui/`` reads.
+    """
+    import argparse
+    import json
+    import sys
+
+    from analyzer import utf8_stdio
+
+    utf8_stdio()
+    parser = argparse.ArgumentParser(
+        prog="python3 -m analyzer.spec",
+        description="Check that a system spec loads and is valid. Read-only.")
+    parser.add_argument("spec", help="system spec path")
+    parser.add_argument("--json", action="store_true",
+                        help="print the verdict as JSON")
+    args = parser.parse_args(argv)
+
+    try:
+        spec = load_system(args.spec)
+    except (OSError, ValueError) as exc:     # TOMLDecodeError is a ValueError
+        verdict = {"ok": False, "error": str(exc)}
+    else:
+        verdict = {"ok": True, "name": spec.get("name"),
+                   "compose_projects": compose_projects(spec),
+                   "services": len(spec["services"]),
+                   "infrastructure": len(spec.get("infrastructure", [])),
+                   "operations": len(spec.get("operations", {}))}
+    if args.json:
+        print(json.dumps(verdict))
+    elif verdict["ok"]:
+        print(f"ok: {args.spec} ({verdict['services']} services, "
+              f"{verdict['infrastructure']} infrastructure, "
+              f"{verdict['operations']} operations)")
+    else:
+        print(f"invalid: {args.spec}: {verdict['error']}", file=sys.stderr)
+    return 0 if verdict["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
