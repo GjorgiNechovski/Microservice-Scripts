@@ -395,6 +395,23 @@ a wrong URL fails every request at any load.
 
 ## If you change this repository
 
+- The setup app in `ui/` (React + .NET) drafts and writes specs and k6 scripts
+  and starts `python3 -m analyzer`; the workflow above doesn't need it. If a spec
+  option should be settable there, `ui/backend/Spec/` writes it. It reads
+  `python3 -m analyzer.spec --json` and `analyzer.collect --discover --json`, and
+  relies on the pipeline cleaning up on Ctrl+C (the k6 container is removed, a
+  container fault injection stopped is started again): keep those working.
+- Its Results page reads what the pipeline writes, as text: the first line of
+  `report.txt` (`ANALYSIS REPORT -- <name>`) and `scaling-report.txt`
+  (`LOAD-SWEEP SCALING REPORT -- <name>`), `load-<N>/` level folders, the
+  `validity.txt` lines (`  PASS  <check>  <detail>`), the `*-explained.txt`
+  headings (a line underlined with dashes) and the chart file names. Changing
+  any of those means changing `ui/backend/Reports/` or
+  `ui/frontend/src/results.ts` in the same change.
+- What the setup app can read, per language (routes, example request bodies,
+  runtimes), is the table in [ui/README.md](ui/README.md#what-it-can-read).
+  Update that table whenever language or framework support changes, in the same
+  change.
 - The engine is standard-library only; numpy and matplotlib only inside
   `analyzer/figures/`.
 - Never hard-code an application or metric name in the engine; extend the

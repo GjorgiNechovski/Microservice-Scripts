@@ -37,6 +37,8 @@ systems/         system specs: TEMPLATE.toml to start from, plus two examples
   example-shop.toml          a made-up shop, to show the engine is generic
   finki-blogger.toml         the thesis case study
   finki-blogger/             its load script, telemetry wiring and scrape job
+ui/              an optional setup app: drafts the spec and load test, then starts the run
+start.sh         starts the setup app (start.ps1 on Windows)
 ```
 
 ## Try it without running anything
@@ -95,6 +97,26 @@ python3 -m analyzer.run_all systems/finki-blogger.toml
 
 The FINKI example walks through all of this on a real system:
 [systems/finki-blogger/README.md](systems/finki-blogger/README.md).
+
+### Or let the setup app draft the spec
+
+`./start.sh` (or `.\start.ps1` on Windows), in this repository's root, opens a local web app that reads
+your compose files, from one repository or several, and drafts the spec for
+you: which services are services and which are infrastructure, replicas,
+readiness ports and instance counts, then the routes each service declares and
+the components each feature needs, each with its reason, for you to check and
+correct. It writes a k6 load script from the routes you pick (logging in first
+if the API needs it), and starts the run with a check of what it needs first;
+fault injection only after showing what it would stop and asking. Its Results
+page shows what a run found (the trust check, the plain-language summary, the
+charts and the reports), also for runs from before, marked as older. It needs
+the .NET 10 SDK and Node.js; see [ui/README.md](ui/README.md).
+
+It reads routes in Python, C#, Java, Kotlin, TypeScript, JavaScript, Go, Rust,
+Ruby, PHP, Elixir, Scala, Swift, Dart, C++ and Clojure, and builds example
+request bodies from the code in the first seven. The full list, per framework,
+is [What it can read](ui/README.md#what-it-can-read). For a service in another
+language it says so, and you add its routes by hand or bring your own k6 script.
 
 ## Commands
 
