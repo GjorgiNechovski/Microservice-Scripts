@@ -22,6 +22,8 @@ so the logic is testable without Docker.
 
 from __future__ import annotations
 
+import contextlib
+
 import os
 import socket
 import time
@@ -313,23 +315,30 @@ def measure_mttr(docker: Docker, component: str, containers: list,
 
             t0 = time.monotonic()
             docker.kill(target)
+            try:
+                # GUARANTEE recovery ourselves -- never trust the declared
+                # restart policy to fire. In testing, `docker kill` left
+                # `unless-stopped` containers dead (Exited 137); passively
+                # waiting for an auto-restart that never comes turns a
+                # measurement into a long outage. So: once the container is
+                # observed down, actively start it. If a policy DID already
+                # bring it back, the start is a harmless no-op.
+                went_down = _wait(lambda: not docker.inspect(target).running,
+                                  timeout=min(15.0, timeout))
+                if went_down:
+                    try:
+                        docker.start(target)
+                    except DockerError:
+                        pass  # already restarting via its policy -- fine
 
-            # GUARANTEE recovery ourselves -- never trust the declared restart
-            # policy to fire. In testing, `docker kill` left `unless-stopped`
-            # containers dead (Exited 137); passively waiting for an auto-restart
-            # that never comes turns a measurement into a long outage. So: once
-            # the container is observed down, actively start it. If a policy DID
-            # already bring it back, the start is a harmless no-op.
-            went_down = _wait(lambda: not docker.inspect(target).running,
-                              timeout=min(15.0, timeout))
-            if went_down:
-                try:
+                recovered = _wait(
+                    lambda: _ready(docker, target, pre.started, port), timeout)
+            except BaseException:
+                # Interrupted between the kill and the recovery (Ctrl+C, or the
+                # setup app's Stop button): never leave the component down.
+                with contextlib.suppress(Exception):
                     docker.start(target)
-                except DockerError:
-                    pass  # already restarting via its policy -- fine
-
-            recovered = _wait(
-                lambda: _ready(docker, target, pre.started, port), timeout)
+                raise
             elapsed = time.monotonic() - t0
 
             if recovered:

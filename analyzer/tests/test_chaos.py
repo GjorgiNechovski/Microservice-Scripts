@@ -207,6 +207,27 @@ def test_measure_mttr_auto_restart_infra_counts_failures():
     assert res.restart_count >= 0
 
 
+def test_an_interrupted_injection_starts_the_component_again():
+    # Ctrl+C, or the setup app's Stop button, can land between the kill and
+    # the recovery; the component must not be left down.
+    docker = _fake()
+
+    class Interrupting(type(docker)):
+        def inspect(self, name):
+            if not self.c[name].running:
+                raise KeyboardInterrupt
+            return super().inspect(name)
+
+    docker.__class__ = Interrupting
+    try:
+        measure_mttr(docker, "blog-service", ["blog-service-1"], repetitions=1)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("the interrupt was swallowed")
+    assert docker.c["blog-service-1"].running
+
+
 def test_measure_mttr_no_containers():
     res = measure_mttr(_fake(), "ghost", [], repetitions=2)
     assert res.samples == []

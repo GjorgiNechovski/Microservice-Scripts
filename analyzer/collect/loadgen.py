@@ -161,7 +161,7 @@ def _env_flags(cfg: dict, environ=None) -> list:
 
 
 def build_command(cfg: dict, project_dir: str,
-                  image: str = _K6_IMAGE) -> list:
+                  image: str = _K6_IMAGE, name: str | None = None) -> list:
     """Build the ``docker run ... k6 run`` command for the load script.
 
     ``--network host`` lets the script reach the app at ``localhost:<port>``
@@ -171,6 +171,9 @@ def build_command(cfg: dict, project_dir: str,
     An absolute ``script`` (what :func:`load_config` produces from a spec
     path) mounts the script's own directory, so imports of sibling files keep
     working. A relative one is still taken relative to ``project_dir``.
+
+    ``name`` names the container, so an interrupted run can remove it: killing
+    the ``docker run`` client leaves the container itself running.
     """
     network = cfg.get("docker_network", "host")
     script = cfg["script"]
@@ -180,6 +183,7 @@ def build_command(cfg: dict, project_dir: str,
         mount, target = os.path.abspath(project_dir), script
     return [
         "docker", "run", "--rm",
+        *(["--name", name] if name else []),
         "--network", network,
         "-v", f"{mount}:/work",
         "-w", "/work",
@@ -202,10 +206,24 @@ def measurement_window(seconds: float) -> str:
 
 def run_load(cfg: dict, project_dir: str = ".", image: str = _K6_IMAGE,
              timeout: float = 1800.0) -> LoadRun:
-    """Run the k6 load script to completion; return timing + exit status."""
-    command = build_command(cfg, project_dir, image)
+    """Run the k6 load script to completion; return timing + exit status.
+
+    If the run is interrupted (Ctrl+C, a timeout, the setup app's Stop), the
+    k6 container is removed: stopping the ``docker run`` client alone would
+    leave it loading the system until its stages end.
+    """
+    name = f"microservice-scripts-k6-{os.getpid()}-{time.time_ns()}"
+    command = build_command(cfg, project_dir, image, name=name)
     start = time.time()
-    proc = subprocess.run(command, capture_output=True, text=True,
-                          timeout=timeout)
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=timeout)
+    except BaseException:
+        try:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True,
+                           timeout=60)
+        except Exception:
+            pass
+        raise
     return LoadRun(proc.returncode, time.time() - start, command,
                    (proc.stdout or "") + (proc.stderr or ""))

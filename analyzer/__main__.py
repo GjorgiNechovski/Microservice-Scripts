@@ -754,4 +754,12 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        # Ctrl+C, or the setup app's Stop: the load generator was removed and
+        # any container fault injection had stopped was started again on the
+        # way out (loadgen.run_load, injector.measure_mttr).
+        print("\n[pipeline] stopped before the end: nothing was analysed.",
+              file=sys.stderr)
+        raise SystemExit(130)

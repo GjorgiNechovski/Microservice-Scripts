@@ -225,6 +225,38 @@ def test_build_command_custom_network_and_overrides():
     assert "--stage" in cmd and cmd[-1] == "s.js"
 
 
+def test_build_command_names_the_container_when_asked():
+    cmd = build_command({"script": "s.js"}, project_dir="/x", name="k6-run-1")
+    assert cmd[cmd.index("--name") + 1] == "k6-run-1"
+    assert "--name" not in build_command({"script": "s.js"}, project_dir="/x")
+
+
+def test_an_interrupted_load_removes_its_k6_container():
+    # stopping the `docker run` client leaves the container loading the system
+    import analyzer.collect.loadgen as lg
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "run"]:
+            raise KeyboardInterrupt
+        return None
+
+    real = lg.subprocess.run
+    lg.subprocess.run = fake_run
+    try:
+        try:
+            lg.run_load({"script": "s.js"}, project_dir="/x")
+        except KeyboardInterrupt:
+            pass
+        else:
+            raise AssertionError("the interrupt was swallowed")
+    finally:
+        lg.subprocess.run = real
+    name = calls[0][calls[0].index("--name") + 1]
+    assert calls[1] == ["docker", "rm", "-f", name], calls
+
+
 def test_measurement_window_matches_the_run():
     # a 2m50s level read over "3m" took in 10 s of whatever came before it
     assert measurement_window(174.2) == "175s"
