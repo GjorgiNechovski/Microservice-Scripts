@@ -1,0 +1,858 @@
+{
+ "name": "finki-blogger-2",
+ "networks": {
+  "backend": {
+   "name": "finki-blogger-backend",
+   "ipam": {}
+  },
+  "frontend": {
+   "name": "finki-blogger-2_frontend",
+   "ipam": {}
+  }
+ },
+ "services": {
+  "api-gateway": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 2,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "KONG_DATABASE": "off",
+    "KONG_DECLARATIVE_CONFIG": "/app/kong.yml",
+    "KONG_ZOOKEEPER_HOST": "zookeeper",
+    "KONG_ZOOKEEPER_PORT": "2181"
+   },
+   "image": "kong:latest",
+   "networks": {
+    "backend": null,
+    "frontend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/kong.yml",
+     "target": "/app/kong.yml",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "blog-service": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 5,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "DB_HOST": "blogging-db-pool",
+    "DB_NAME": "finki-blogger-blogs",
+    "DB_PASSWORD": "***",
+    "DB_PORT": "5432",
+    "DB_USER": "finki-blogger",
+    "ZOOKEEPER_HOST": "zookeeper",
+    "ZOOKEEPER_PORT": "2181"
+   },
+   "networks": {
+    "backend": null
+   },
+   "build": {
+    "context": "{PROJECT}/BlogService",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "blogging-db-pool": {
+     "condition": "service_healthy",
+     "required": true
+    },
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "blog-service-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/blog-service.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "blog-service": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "8086",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "blogging-db": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "POSTGRESQL_DATABASE": "finki-blogger-blogs",
+    "POSTGRESQL_MAX_CONNECTIONS": "400",
+    "POSTGRESQL_PASSWORD": "***",
+    "POSTGRESQL_POSTGRES_PASSWORD": "***",
+    "POSTGRESQL_USERNAME": "finki-blogger",
+    "REPMGR_NODE_ID": "1",
+    "REPMGR_NODE_NAME": "blogging-db-1",
+    "REPMGR_NODE_NETWORK_NAME": "blogging-db",
+    "REPMGR_PARTNER_NODES": "blogging-db,blogging-db-2",
+    "REPMGR_PASSWORD": "***",
+    "REPMGR_PORT_NUMBER": "5432",
+    "REPMGR_PRIMARY_HOST": "blogging-db",
+    "REPMGR_PRIMARY_PORT": "5432"
+   },
+   "image": "bitnamilegacy/postgresql-repmgr:17.6.0",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "blogging_ha_1",
+     "target": "/bitnami/postgresql",
+     "volume": {}
+    }
+   ],
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "pg_isready -U finki-blogger -d finki-blogger-blogs"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "40s"
+   }
+  },
+  "blogging-db-2": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "POSTGRESQL_DATABASE": "finki-blogger-blogs",
+    "POSTGRESQL_MAX_CONNECTIONS": "400",
+    "POSTGRESQL_PASSWORD": "***",
+    "POSTGRESQL_POSTGRES_PASSWORD": "***",
+    "POSTGRESQL_USERNAME": "finki-blogger",
+    "REPMGR_NODE_ID": "2",
+    "REPMGR_NODE_NAME": "blogging-db-2",
+    "REPMGR_NODE_NETWORK_NAME": "blogging-db-2",
+    "REPMGR_PARTNER_NODES": "blogging-db,blogging-db-2",
+    "REPMGR_PASSWORD": "***",
+    "REPMGR_PORT_NUMBER": "5432",
+    "REPMGR_PRIMARY_HOST": "blogging-db",
+    "REPMGR_PRIMARY_PORT": "5432"
+   },
+   "image": "bitnamilegacy/postgresql-repmgr:17.6.0",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "blogging_ha_2",
+     "target": "/bitnami/postgresql",
+     "volume": {}
+    }
+   ],
+   "depends_on": {
+    "blogging-db": {
+     "condition": "service_healthy",
+     "required": true
+    }
+   },
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "pg_isready -U finki-blogger -d finki-blogger-blogs"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "1m0s"
+   }
+  },
+  "blogging-db-pool": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "PGPOOL_ADMIN_PASSWORD": "***",
+    "PGPOOL_ADMIN_USERNAME": "admin",
+    "PGPOOL_AUTO_FAILBACK": "yes",
+    "PGPOOL_BACKEND_APPLICATION_NAMES": "blogging-db-1,blogging-db-2",
+    "PGPOOL_BACKEND_NODES": "0:blogging-db:5432,1:blogging-db-2:5432",
+    "PGPOOL_ENABLE_LDAP": "no",
+    "PGPOOL_ENABLE_LOAD_BALANCING": "no",
+    "PGPOOL_MAX_POOL": "1",
+    "PGPOOL_NUM_INIT_CHILDREN": "300",
+    "PGPOOL_POSTGRES_CUSTOM_PASSWORDS": "***",
+    "PGPOOL_POSTGRES_CUSTOM_USERS": "finki-blogger",
+    "PGPOOL_POSTGRES_PASSWORD": "***",
+    "PGPOOL_POSTGRES_USERNAME": "postgres",
+    "PGPOOL_SR_CHECK_PASSWORD": "***",
+    "PGPOOL_SR_CHECK_USER": "postgres"
+   },
+   "image": "bitnamilegacy/pgpool:4.6.3",
+   "networks": {
+    "backend": null
+   },
+   "depends_on": {
+    "blogging-db": {
+     "condition": "service_healthy",
+     "required": true
+    }
+   },
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "PGPASSWORD=root123 psql -U postgres -h 127.0.0.1 -tA -c 'select 1'"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "40s"
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 5432,
+     "published": "6000",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "comment-service": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 3,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "DB_HOST": "blogging-db-pool",
+    "DB_NAME": "finki-blogger-blogs",
+    "DB_PASSWORD": "***",
+    "DB_PORT": "5432",
+    "DB_USER": "finki-blogger",
+    "ZOOKEEPER_HOST": "zookeeper",
+    "ZOOKEEPER_PORT": "2181"
+   },
+   "networks": {
+    "backend": null
+   },
+   "build": {
+    "context": "{PROJECT}/CommentService",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "blogging-db-pool": {
+     "condition": "service_healthy",
+     "required": true
+    },
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "comment-service-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/comment-service.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "comment-service": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "8087",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "email-service": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 3,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "SPRING_RABBITMQ_ADDRESSES": "rabbitmq:5672,rabbitmq-2:5672",
+    "ZOOKEEPER_HOST": "zookeeper",
+    "ZOOKEEPER_PORT": "2181"
+   },
+   "networks": {
+    "backend": null
+   },
+   "build": {
+    "context": "{PROJECT}/EmailService",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "rabbitmq": {
+     "condition": "service_started",
+     "required": true
+    },
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "email-service-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/email-service.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "email-service": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "8089",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "frontend": {
+   "command": null,
+   "entrypoint": null,
+   "networks": {
+    "frontend": null
+   },
+   "build": {
+    "context": "{PROJECT}/Frontend",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "gateway-lb": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 4200,
+     "published": "4200",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "gateway-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null,
+    "frontend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/gateway.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "api-gateway": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 8000,
+     "published": "8000",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "like-service": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 5,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "DB_HOST": "blogging-db-pool",
+    "DB_NAME": "finki-blogger-blogs",
+    "DB_PASSWORD": "***",
+    "DB_PORT": "5432",
+    "DB_USER": "finki-blogger",
+    "RABBITMQ_HOST": "rabbitmq,rabbitmq-2",
+    "RABBITMQ_PORT": "5672",
+    "ZOOKEEPER_HOST": "zookeeper",
+    "ZOOKEEPER_PORT": "2181"
+   },
+   "networks": {
+    "backend": null
+   },
+   "build": {
+    "context": "{PROJECT}/LikeService",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "blogging-db-pool": {
+     "condition": "service_healthy",
+     "required": true
+    },
+    "rabbitmq": {
+     "condition": "service_started",
+     "required": true
+    },
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "like-service-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/like-service.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "like-service": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "8088",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "rabbitmq": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "RABBITMQ_ERLANG_COOKIE": "***"
+   },
+   "hostname": "rabbitmq-1",
+   "image": "rabbitmq:3-management",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "rabbitmq1_data",
+     "target": "/var/lib/rabbitmq",
+     "volume": {}
+    }
+   ],
+   "healthcheck": {
+    "test": [
+     "CMD",
+     "rabbitmq-diagnostics",
+     "-q",
+     "ping"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "30s"
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 5672,
+     "published": "5672",
+     "protocol": "tcp"
+    },
+    {
+     "mode": "ingress",
+     "target": 15672,
+     "published": "15672",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "rabbitmq-2": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": [
+    "/bin/bash",
+    "/opt/join-cluster.sh"
+   ],
+   "environment": {
+    "RABBITMQ_ERLANG_COOKIE": "***",
+    "RABBITMQ_SEED_NODE": "rabbitmq-1"
+   },
+   "hostname": "rabbitmq-2",
+   "image": "rabbitmq:3-management",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "rabbitmq2_data",
+     "target": "/var/lib/rabbitmq",
+     "volume": {}
+    },
+    {
+     "type": "bind",
+     "source": "{PROJECT}/rabbitmq/join-cluster.sh",
+     "target": "/opt/join-cluster.sh",
+     "read_only": true,
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "rabbitmq": {
+     "condition": "service_healthy",
+     "required": true
+    }
+   },
+   "healthcheck": {
+    "test": [
+     "CMD",
+     "rabbitmq-diagnostics",
+     "-q",
+     "ping"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "1m0s"
+   }
+  },
+  "user-db": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "POSTGRESQL_DATABASE": "finki-blogger-users",
+    "POSTGRESQL_MAX_CONNECTIONS": "400",
+    "POSTGRESQL_PASSWORD": "***",
+    "POSTGRESQL_POSTGRES_PASSWORD": "***",
+    "POSTGRESQL_USERNAME": "finki-blogger",
+    "REPMGR_NODE_ID": "1",
+    "REPMGR_NODE_NAME": "user-db-1",
+    "REPMGR_NODE_NETWORK_NAME": "user-db",
+    "REPMGR_PARTNER_NODES": "user-db,user-db-2",
+    "REPMGR_PASSWORD": "***",
+    "REPMGR_PORT_NUMBER": "5432",
+    "REPMGR_PRIMARY_HOST": "user-db",
+    "REPMGR_PRIMARY_PORT": "5432"
+   },
+   "image": "bitnamilegacy/postgresql-repmgr:17.6.0",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "user_ha_1",
+     "target": "/bitnami/postgresql",
+     "volume": {}
+    }
+   ],
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "pg_isready -U finki-blogger -d finki-blogger-users"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "40s"
+   }
+  },
+  "user-db-2": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "POSTGRESQL_DATABASE": "finki-blogger-users",
+    "POSTGRESQL_MAX_CONNECTIONS": "400",
+    "POSTGRESQL_PASSWORD": "***",
+    "POSTGRESQL_POSTGRES_PASSWORD": "***",
+    "POSTGRESQL_USERNAME": "finki-blogger",
+    "REPMGR_NODE_ID": "2",
+    "REPMGR_NODE_NAME": "user-db-2",
+    "REPMGR_NODE_NETWORK_NAME": "user-db-2",
+    "REPMGR_PARTNER_NODES": "user-db,user-db-2",
+    "REPMGR_PASSWORD": "***",
+    "REPMGR_PORT_NUMBER": "5432",
+    "REPMGR_PRIMARY_HOST": "user-db",
+    "REPMGR_PRIMARY_PORT": "5432"
+   },
+   "image": "bitnamilegacy/postgresql-repmgr:17.6.0",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "volume",
+     "source": "user_ha_2",
+     "target": "/bitnami/postgresql",
+     "volume": {}
+    }
+   ],
+   "depends_on": {
+    "user-db": {
+     "condition": "service_healthy",
+     "required": true
+    }
+   },
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "pg_isready -U finki-blogger -d finki-blogger-users"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "1m0s"
+   }
+  },
+  "user-db-pool": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "PGPOOL_ADMIN_PASSWORD": "***",
+    "PGPOOL_ADMIN_USERNAME": "admin",
+    "PGPOOL_AUTO_FAILBACK": "yes",
+    "PGPOOL_BACKEND_APPLICATION_NAMES": "user-db-1,user-db-2",
+    "PGPOOL_BACKEND_NODES": "0:user-db:5432,1:user-db-2:5432",
+    "PGPOOL_ENABLE_LDAP": "no",
+    "PGPOOL_ENABLE_LOAD_BALANCING": "no",
+    "PGPOOL_MAX_POOL": "1",
+    "PGPOOL_NUM_INIT_CHILDREN": "300",
+    "PGPOOL_POSTGRES_CUSTOM_PASSWORDS": "***",
+    "PGPOOL_POSTGRES_CUSTOM_USERS": "finki-blogger",
+    "PGPOOL_POSTGRES_PASSWORD": "***",
+    "PGPOOL_POSTGRES_USERNAME": "postgres",
+    "PGPOOL_SR_CHECK_PASSWORD": "***",
+    "PGPOOL_SR_CHECK_USER": "postgres"
+   },
+   "image": "bitnamilegacy/pgpool:4.6.3",
+   "networks": {
+    "backend": null
+   },
+   "depends_on": {
+    "user-db": {
+     "condition": "service_healthy",
+     "required": true
+    }
+   },
+   "healthcheck": {
+    "test": [
+     "CMD-SHELL",
+     "PGPASSWORD=root123 psql -U postgres -h 127.0.0.1 -tA -c 'select 1'"
+    ],
+    "timeout": "5s",
+    "interval": "10s",
+    "retries": 12,
+    "start_period": "40s"
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 5432,
+     "published": "7000",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "user-service": {
+   "deploy": {
+    "mode": "replicated",
+    "replicas": 3,
+    "resources": {},
+    "placement": {},
+    "endpoint_mode": "vip"
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "ConnectionStrings__DefaultConnection": "Host=user-db-pool;Port=5432;Database=finki-blogger-users;Username=finki-blogger;Password=***;Maximum Pool Size=30",
+    "ZOOKEEPER_HOST": "zookeeper",
+    "ZOOKEEPER_PORT": "2181"
+   },
+   "networks": {
+    "backend": null
+   },
+   "build": {
+    "context": "{PROJECT}/UserService",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "user-db-pool": {
+     "condition": "service_healthy",
+     "required": true
+    },
+    "zookeeper": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "user-service-lb": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:latest",
+   "networks": {
+    "backend": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/nginx/user-service.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "user-service": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "8090",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "zookeeper": {
+   "restart": "unless-stopped",
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "ZOO_MY_ID": "1",
+    "ZOO_SERVERS": "server.1=zookeeper:2888:3888;2181"
+   },
+   "image": "zookeeper:3.7.0",
+   "networks": {
+    "backend": null
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 2181,
+     "published": "2181",
+     "protocol": "tcp"
+    }
+   ]
+  }
+ },
+ "volumes": {
+  "blogging_ha_1": {
+   "name": "finki-blogger-2_blogging_ha_1"
+  },
+  "blogging_ha_2": {
+   "name": "finki-blogger-2_blogging_ha_2"
+  },
+  "rabbitmq1_data": {
+   "name": "finki-blogger-2_rabbitmq1_data"
+  },
+  "rabbitmq2_data": {
+   "name": "finki-blogger-2_rabbitmq2_data"
+  },
+  "user_ha_1": {
+   "name": "finki-blogger-2_user_ha_1"
+  },
+  "user_ha_2": {
+   "name": "finki-blogger-2_user_ha_2"
+  }
+ }
+}

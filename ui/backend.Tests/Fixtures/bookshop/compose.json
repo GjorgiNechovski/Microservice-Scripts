@@ -1,0 +1,109 @@
+{
+ "name": "bookshop-pristine",
+ "networks": {
+  "default": {
+   "name": "bookshop-pristine_default",
+   "ipam": {}
+  }
+ },
+ "services": {
+  "catalog": {
+   "deploy": {
+    "replicas": 2,
+    "resources": {},
+    "placement": {}
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "REDIS_HOST": "redis"
+   },
+   "networks": {
+    "default": null
+   },
+   "build": {
+    "context": "{PROJECT}/catalog",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "redis": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "gateway": {
+   "command": null,
+   "entrypoint": null,
+   "image": "nginx:alpine",
+   "networks": {
+    "default": null
+   },
+   "volumes": [
+    {
+     "type": "bind",
+     "source": "{PROJECT}/gateway/nginx.conf",
+     "target": "/etc/nginx/conf.d/default.conf",
+     "read_only": true,
+     "bind": {}
+    }
+   ],
+   "depends_on": {
+    "catalog": {
+     "condition": "service_started",
+     "required": true
+    },
+    "orders": {
+     "condition": "service_started",
+     "required": true
+    }
+   },
+   "ports": [
+    {
+     "mode": "ingress",
+     "target": 80,
+     "published": "9000",
+     "protocol": "tcp"
+    }
+   ]
+  },
+  "orders": {
+   "deploy": {
+    "replicas": 2,
+    "resources": {},
+    "placement": {}
+   },
+   "command": null,
+   "entrypoint": null,
+   "environment": {
+    "CATALOG_URL": "http://catalog:8000",
+    "REDIS_HOST": "redis"
+   },
+   "networks": {
+    "default": null
+   },
+   "build": {
+    "context": "{PROJECT}/orders",
+    "dockerfile": "Dockerfile"
+   },
+   "depends_on": {
+    "catalog": {
+     "condition": "service_started",
+     "required": true
+    },
+    "redis": {
+     "condition": "service_started",
+     "required": true
+    }
+   }
+  },
+  "redis": {
+   "command": null,
+   "entrypoint": null,
+   "image": "redis:7-alpine",
+   "networks": {
+    "default": null
+   }
+  }
+ }
+}

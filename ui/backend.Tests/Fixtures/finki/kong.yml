@@ -1,0 +1,79 @@
+_format_version: "2.1"
+services:
+  - name: blog-service
+    url: http://blog-service-lb:80
+    routes:
+      - name: blog-service
+        paths:
+          - /blog
+    plugins:
+      - name: cors
+        config:
+          origins: ["http://localhost:4200"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Accept", "Authorization", "Content-Type"]
+          credentials: true
+  - name: comment-service
+    url: http://comment-service-lb:80
+    routes:
+      - name: comment-service
+        paths:
+          - /comments
+    plugins:
+      - name: cors
+        config:
+          origins: ["http://localhost:4200"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Accept", "Authorization", "Content-Type"]
+          credentials: true
+  - name: like-service
+    url: http://like-service-lb:80
+    routes:
+      - name: like-service
+        paths:
+          - /likes
+    plugins:
+      - name: cors
+        config:
+          origins: ["http://localhost:4200"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Accept", "Authorization", "Content-Type"]
+          credentials: true
+  - name: email-service
+    url: http://email-service-lb:80
+    routes:
+      - name: email-service
+        paths:
+          - /emails
+    plugins:
+      - name: cors
+        config:
+          origins: ["http://localhost:4200"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Accept", "Authorization", "Content-Type"]
+          credentials: true
+  - name: user-service
+    url: http://user-service-lb:80
+    routes:
+      - name: user-service
+        paths:
+          - /user
+    plugins:
+      - name: cors
+        config:
+          origins: ["http://localhost:4200"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Accept", "Authorization", "Content-Type"]
+          credentials: true
+
+plugins:
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+  - name: opentelemetry
+    config:
+      traces_endpoint: http://otel-collector:4318/v1/traces
+      resource_attributes:
+        service.name: kong-gateway
