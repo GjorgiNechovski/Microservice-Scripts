@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "Example values for the types request bodies and parameters are declared with, across languages:",
+    "what Swagger shows as an example, but from the code. Data, not code: add a type here and its",
+    "example is used. Names are matched on the type's last part (mongoose.Types.ObjectId -> ObjectId),",
+    "exactly first, then ignoring case. 'fields' gives string fields a better example by their name."
+  ],
+  "types": [
+    { "names": ["str", "string", "String", "char", "Character", "CharSequence", "constr", "StrictStr", "Text"], "value": "string" },
+    {
+      "names": ["int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort", "Integer", "Long", "Short", "Byte",
+                "Int16", "Int32", "Int64", "UInt32", "UInt64", "BigInteger", "number", "bigint", "conint", "StrictInt",
+                "PositiveInt", "NonNegativeInt", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
+                "u128", "usize", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "Int", "Number",
+                "Integer", "Fixnum"],
+      "value": 1
+    },
+    {
+      "names": ["float", "double", "decimal", "Decimal", "Double", "Float", "Single", "BigDecimal", "Decimal128",
+                "BsonDecimal128", "condecimal", "confloat", "StrictFloat", "PositiveFloat", "f32", "f64", "float32", "float64",
+                "BigDecimal", "Numeric"],
+      "value": 1.5
+    },
+    { "names": ["bool", "boolean", "Boolean", "StrictBool"], "value": true },
+    {
+      "names": ["datetime", "DateTime", "DateTimeOffset", "LocalDateTime", "OffsetDateTime", "ZonedDateTime", "Instant",
+                "Date", "Timestamp", "BsonDateTime", "AwareDatetime", "NaiveDatetime", "PastDatetime", "FutureDatetime", "Time",
+                "NaiveDateTime", "SystemTime", "OffsetDateTime", "PrimitiveDateTime", "Carbon"],
+      "value": "2026-01-01T12:00:00Z"
+    },
+    { "names": ["date", "DateOnly", "LocalDate", "PastDate", "FutureDate", "NaiveDate"], "value": "2026-01-01" },
+    { "names": ["time", "TimeOnly", "LocalTime", "OffsetTime"], "value": "12:00:00" },
+    { "names": ["timedelta", "TimeSpan", "Duration"], "value": "PT1H" },
+    { "names": ["UUID", "uuid", "Guid", "UUID1", "UUID4", "UUID5"], "value": "3fa85f64-5717-4562-b3fc-2c963f66afa6" },
+    {
+      "names": ["ObjectId", "PydanticObjectId", "PyObjectId", "ObjectIdField", "BsonObjectId", "ObjectID", "OID"],
+      "value": "507f1f77bcf86cd799439011",
+      "note": "a MongoDB ObjectId"
+    },
+    { "names": ["EmailStr", "Email", "NameEmail", "MailAddress", "InternetAddress"], "value": "user@example.com" },
+    { "names": ["HttpUrl", "AnyUrl", "AnyHttpUrl", "Url", "Uri", "URL", "URI"], "value": "https://example.com" },
+    { "names": ["IPvAnyAddress", "IPAddress", "InetAddress"], "value": "127.0.0.1" },
+    { "names": ["SecretStr", "SecureString"], "value": "secret" },
+    { "names": ["bytes", "Binary", "BsonBinaryData", "Buffer", "ByteString"], "value": "" },
+    {
+      "names": ["dict", "Dict", "Mapping", "MutableMapping", "Map", "HashMap", "LinkedHashMap", "TreeMap", "Dictionary",
+                "IDictionary", "IReadOnlyDictionary", "Record", "object", "Object", "JObject", "JsonElement", "JsonNode",
+                "JsonObject", "JsonDocument", "BsonDocument", "Document", "JsonValue", "Json", "JSON", "Any", "any",
+                "unknown", "dynamic", "ExpandoObject", "RawMessage", "Value", "Bson", "bson.M", "M", "D", "Hash"],
+      "value": {}
+    }
+  ],
+  "fields": [
+    { "pattern": "(?i)e-?mail", "value": "user@example.com" },
+    { "pattern": "(?i)pass(word|wd)?$|^pwd$", "value": "Password123!" },
+    { "pattern": "(?i)(url|uri|link|website|homepage)$", "value": "https://example.com" },
+    { "pattern": "(?i)phone|mobile", "value": "+15550100" },
+    { "pattern": "(?i)^(username|user_name|login)$", "value": "user1" }
+  ],
+  "skipInBodies": {
+    "_comment": "Fields left out of example bodies: a fixed id sent on every request fails after the first insert.",
+    "names": ["_id"],
+    "optionalNames": ["id", "Id", "ID", "uuid", "guid"],
+    "markers": ["BsonId", "Id", "Key", "DatabaseGenerated", "JsonIgnore", "Exclude", "PrimaryColumn", "PrimaryGeneratedColumn"]
+  }
+}
