@@ -1,0 +1,315 @@
+{
+  "_comment": [
+    "How common web frameworks declare their routes. Data, not code: add a framework here and the setup app finds its routes.",
+    "Each pattern is a .NET regular expression. Named groups a route pattern can use:",
+    "  method  the HTTP method (any case); without it, verbs found in 'args' or right after the match (methodsAfter), else defaultMethod",
+    "  path    the route's path; without it, the first match of pathFromArgs in 'args' (all of them joined with / when joinPaths)",
+    "  object  the router variable it is declared on (app, router, ...)",
+    "  args    an argument list to read the path, methods and handlers from",
+    "Prefix patterns add a prefix: scope 'following' to every route after it in the same file (a controller",
+    "class), scope 'object' to the routes declared on the same router variable. A 'controller' group replaces",
+    "[controller] in the prefix (ASP.NET). 'handler' is matched just after a route to name it after its function.",
+    "rootedIgnoresPrefix: a route path starting with / ignores the prefix. noPrefix: never prefixed.",
+    "crud: the path is a REST resource; it stands for list, create, read, replace, update and delete routes.",
+    "handlersFromArgs: one route per match in 'args', each with its own method and handler (Axum, Actix).",
+    "inlineHandler: where an inline handler's parameter list starts, right after the route (a lambda, func(...) {...}).",
+    "files: only files whose name matches. functionDefs: how a handler named elsewhere is found, per extension.",
+    "languages: file extensions by language, to say which language a service is written in."
+  ],
+  "skipFolders": [
+    "node_modules", "bin", "obj", ".git", "venv", ".venv", "env", "__pycache__", "dist", "build", "target",
+    "vendor", "test", "tests", "__tests__", "spec", "specs", "testdata", "e2e", ".idea", ".vs", ".vscode",
+    "migrations", "wwwroot", "site-packages", ".mvn", ".gradle", "deps", "_build", ".dart_tool", "Pods",
+    "cmake-build-debug", "cmake-build-release", "third_party", "external", ".bundle", "storage", "public"
+  ],
+  "skipFiles": "(?i)(^test_|_test\\.|\\.test\\.|\\.spec\\.|tests?\\.cs$|^conftest\\.py$|_spec\\.rb$|Test\\.(java|kt|php)$|\\.min\\.js$)",
+  "languages": {
+    ".py": "Python", ".cs": "C#", ".fs": "F#", ".vb": "Visual Basic", ".java": "Java", ".kt": "Kotlin", ".scala": "Scala",
+    ".groovy": "Groovy", ".clj": "Clojure", ".ts": "TypeScript", ".js": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
+    ".go": "Go", ".rs": "Rust", ".rb": "Ruby", ".php": "PHP", ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".hpp": "C++",
+    ".c": "C", ".ex": "Elixir", ".exs": "Elixir", ".erl": "Erlang", ".swift": "Swift", ".dart": "Dart", ".hs": "Haskell",
+    ".ml": "OCaml", ".cr": "Crystal", ".nim": "Nim", ".zig": "Zig", ".lua": "Lua", ".pl": "Perl", ".pm": "Perl", ".r": "R",
+    ".jl": "Julia", ".v": "V", ".d": "D", ".gleam": "Gleam", ".rkt": "Racket", ".cob": "COBOL", ".pas": "Pascal"
+  },
+  "functionDefs": {
+    ".py": "\\bdef\\s+{name}\\s*\\(",
+    ".go": "\\bfunc\\s+(?:\\([^)]*\\)\\s*)?{name}\\s*\\(",
+    ".rs": "\\bfn\\s+{name}\\s*(?:<[^>]*>)?\\s*\\(",
+    ".js": "(?:\\bfunction\\s+{name}\\s*\\(|\\b(?:const|let|var)\\s+{name}\\s*=\\s*(?:async\\s*)?(?:function\\s*)?\\(|^\\s*(?:async\\s+)?{name}\\s*\\()",
+    ".ts": "(?:\\bfunction\\s+{name}\\s*(?:<[^>]*>)?\\(|\\b(?:const|let|var)\\s+{name}\\s*=\\s*(?:async\\s*)?(?:function\\s*)?\\(|^\\s*(?:public\\s+|private\\s+|async\\s+)*{name}\\s*\\()",
+    ".mjs": "(?:\\bfunction\\s+{name}\\s*\\(|\\b(?:const|let|var)\\s+{name}\\s*=\\s*(?:async\\s*)?(?:function\\s*)?\\()",
+    ".rb": "\\bdef\\s+{name}\\b",
+    ".php": "\\bfunction\\s+{name}\\s*\\(",
+    ".cs": "\\b{name}\\s*(?:<[^>]*>)?\\s*\\(",
+    ".java": "\\b{name}\\s*\\(",
+    ".kt": "\\bfun\\s+{name}\\s*\\(",
+    ".swift": "\\bfunc\\s+{name}\\s*\\(",
+    ".dart": "\\b{name}\\s*\\(",
+    ".ex": "\\bdef\\s+{name}\\s*\\("
+  },
+  "frameworks": [
+    {
+      "name": "FastAPI / Flask / Sanic / aiohttp",
+      "extensions": [".py"],
+      "routes": [
+        { "regex": "@(?<object>\\w+)\\.(?<method>get|post|put|delete|patch)\\(\\s*(?:path\\s*=\\s*)?[rbuf]?[\"'](?<path>[^\"']*)[\"']" },
+        { "regex": "@(?<object>\\w+)\\.(?:api_)?route\\(\\s*[\"'](?<path>[^\"']*)[\"'](?<args>[^)]*)\\)", "defaultMethod": "GET" }
+      ],
+      "prefixes": [
+        {
+          "regex": "(?<object>\\w+)\\s*=\\s*(?:APIRouter|Blueprint)\\((?<args>[^)]*)\\)",
+          "prefixFromArgs": "(?:prefix|url_prefix)\\s*=\\s*[\"'](?<prefix>[^\"']*)[\"']",
+          "scope": "object"
+        }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:async\\s+)?def\\s+(?<name>\\w+)"
+    },
+    {
+      "name": "Litestar / Quart decorators",
+      "extensions": [".py"],
+      "routes": [
+        { "regex": "^\\s*@(?<method>get|post|put|delete|patch)\\(\\s*(?:path\\s*=\\s*)?[\"'](?<path>[^\"']*)[\"']" }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:async\\s+)?def\\s+(?<name>\\w+)"
+    },
+    {
+      "name": "Django / Django REST framework",
+      "extensions": [".py"],
+      "files": "(?i)urls\\.py$",
+      "routes": [
+        { "regex": "\\b(?:re_)?path\\(\\s*r?[\"'](?<path>[^\"']*)[\"']\\s*,\\s*(?:[\\w.]+\\.as_view\\(\\)|(?<handler>[\\w.]+))", "defaultMethod": "GET" },
+        { "regex": "\\.register\\(\\s*r?[\"'](?<path>[^\"']+)[\"']", "crud": true }
+      ]
+    },
+    {
+      "name": "Falcon",
+      "extensions": [".py"],
+      "routes": [
+        { "regex": "\\.add_route\\(\\s*[\"'](?<path>/[^\"']*)[\"']", "defaultMethod": "GET" }
+      ]
+    },
+    {
+      "name": "ASP.NET Core",
+      "extensions": [".cs"],
+      "routes": [
+        {
+          "regex": "\\[Http(?<method>Get|Post|Put|Delete|Patch)(?:\\(\\s*(?:template:\\s*)?\"(?<path>[^\"]*)\"[^)]*\\))?\\]",
+          "rootedIgnoresPrefix": true
+        },
+        { "regex": "\\.Map(?<method>Get|Post|Put|Delete|Patch)\\(\\s*(?:pattern:\\s*)?\"(?<path>[^\"]*)\"", "noPrefix": true }
+      ],
+      "prefixes": [
+        {
+          "regex": "\\[Route\\(\\s*(?:template:\\s*)?\"(?<prefix>[^\"]*)\"\\s*\\)\\]\\s*(?:\\[[^\\]]*\\]\\s*)*(?:(?:public|internal|sealed|partial|abstract|static)\\s+)*class\\s+(?<controller>\\w+)",
+          "scope": "following"
+        }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*\\[[^\\n]*\\][ \\t]*\\n)*[ \\t]*(?:(?:public|private|protected|internal|static|async|virtual|override)\\s+)+[^(=;{]*?\\b(?<name>\\w+)\\s*(?:<[^>]*>)?\\(",
+      "inlineHandler": "\\A\\s*,\\s*(?:static\\s+)?(?:async\\s+)?(?=\\()"
+    },
+    {
+      "name": "FastEndpoints",
+      "extensions": [".cs"],
+      "routes": [
+        { "regex": "^\\s*(?<method>Get|Post|Put|Patch|Delete)\\(\\s*\"(?<path>/[^\"]*)\"\\s*\\)\\s*;" }
+      ]
+    },
+    {
+      "name": "Spring",
+      "extensions": [".java", ".kt"],
+      "routes": [
+        { "regex": "@(?<method>Get|Post|Put|Delete|Patch)Mapping(?:\\((?<args>[^)]*)\\))?", "pathFromArgs": "\"(?<path>[^\"]*)\"" },
+        {
+          "regex": "@RequestMapping\\((?<args>[^)]*)\\)(?=\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:public|private|protected|fun)\\b[^{;]*?\\()",
+          "pathFromArgs": "\"(?<path>[^\"]*)\"",
+          "defaultMethod": "GET"
+        }
+      ],
+      "prefixes": [
+        {
+          "regex": "@RequestMapping\\((?<args>[^)]*)\\)(?=\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:(?:public|abstract|final|open|data)\\s+)*class\\b)",
+          "prefixFromArgs": "\"(?<prefix>[^\"]*)\"",
+          "scope": "following"
+        }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:(?:public|private|protected|static|final|suspend)\\s+)*(?:fun\\s+)?[^(=;{]*?\\b(?<name>\\w+)\\s*\\("
+    },
+    {
+      "name": "JAX-RS / Quarkus / Jersey",
+      "extensions": [".java", ".kt"],
+      "routes": [
+        { "regex": "@(?<method>GET|POST|PUT|DELETE|PATCH)\\b(?:\\s*@(?!Path\\b)\\w+(?:\\([^)]*\\))?)*(?:\\s*@Path\\(\\s*\"(?<path>[^\"]*)\"\\s*\\))?" }
+      ],
+      "prefixes": [
+        { "regex": "@Path\\(\\s*\"(?<prefix>[^\"]*)\"\\s*\\)(?=\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:(?:public|abstract|final|open)\\s+)*class\\b)", "scope": "following" }
+      ],
+      "handler": "\\A(?:[^\\n]*\\n)*?[ \\t]*(?:(?:public|private|protected|static|final|suspend)\\s+)+(?:fun\\s+)?[^(=;{@]*?\\b(?<name>\\w+)\\s*\\("
+    },
+    {
+      "name": "Micronaut",
+      "extensions": [".java", ".kt", ".groovy"],
+      "routes": [
+        { "regex": "@(?<method>Get|Post|Put|Delete|Patch)\\(\\s*(?:(?:value|uri)\\s*=\\s*)?\"(?<path>[^\"]*)\"" }
+      ],
+      "prefixes": [
+        { "regex": "@Controller\\(\\s*(?:value\\s*=\\s*)?\"(?<prefix>[^\"]*)\"", "scope": "following" }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:(?:public|private|protected|static|final|suspend)\\s+)*(?:fun\\s+)?[^(=;{]*?\\b(?<name>\\w+)\\s*\\("
+    },
+    {
+      "name": "Ktor",
+      "extensions": [".kt"],
+      "routes": [
+        { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\(\\s*\"(?<path>[^\"]*)\"\\s*\\)\\s*\\{" }
+      ]
+    },
+    {
+      "name": "Express / Fastify / Koa / Hono / Elysia",
+      "extensions": [".js", ".mjs", ".cjs", ".ts"],
+      "routes": [
+        { "regex": "\\b(?<object>app|router|api|server|routes|fastify|hono|elysia|r)\\.(?<method>get|post|put|delete|patch)\\(\\s*['\"`](?<path>/[^'\"`]*)['\"`]" }
+      ],
+      "prefixes": [
+        {
+          "regex": "(?<object>\\w+)\\s*=\\s*(?:express\\.Router|Router|new\\s+Hono|new\\s+Elysia)\\(\\s*(?:\\{\\s*prefix\\s*:\\s*)?['\"`](?<prefix>/[^'\"`]*)['\"`]",
+          "scope": "object"
+        }
+      ],
+      "handler": "\\A\\s*,\\s*(?:async\\s+)?(?:function\\s+)?(?<name>[A-Za-z_$][\\w$.]*)\\s*[,)]",
+      "inlineHandler": "\\A\\s*,\\s*(?:async\\s*)?(?:function\\s*\\w*\\s*)?(?=\\()"
+    },
+    {
+      "name": "hapi / Fastify route objects",
+      "extensions": [".js", ".mjs", ".cjs", ".ts"],
+      "routes": [
+        { "regex": "method\\s*:\\s*['\"](?<method>\\w+)['\"]\\s*,\\s*(?:path|url)\\s*:\\s*['\"`](?<path>/[^'\"`]*)['\"`]" },
+        { "regex": "(?:path|url)\\s*:\\s*['\"`](?<path>/[^'\"`]*)['\"`]\\s*,\\s*method\\s*:\\s*['\"](?<method>\\w+)['\"]" }
+      ]
+    },
+    {
+      "name": "NestJS",
+      "extensions": [".ts"],
+      "routes": [
+        { "regex": "@(?<method>Get|Post|Put|Delete|Patch)\\(\\s*(?:['\"`](?<path>[^'\"`]*)['\"`])?\\s*\\)" }
+      ],
+      "prefixes": [
+        { "regex": "@Controller\\(\\s*(?:['\"`](?<prefix>[^'\"`]*)['\"`])?\\s*\\)", "scope": "following" }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:(?:public|private|protected|async)\\s+)*(?<name>\\w+)\\s*\\("
+    },
+    {
+      "name": "Go (net/http, gin, echo, chi, fiber, gorilla)",
+      "extensions": [".go"],
+      "routes": [
+        { "regex": "\\b(?<object>\\w+)\\.(?<method>GET|POST|PUT|DELETE|PATCH|Get|Post|Put|Delete|Patch)\\(\\s*\"(?<path>/[^\"]*)\"" },
+        {
+          "regex": "\\bHandle(?:Func)?\\(\\s*\"(?:(?<method>GET|POST|PUT|DELETE|PATCH)\\s+)?(?<path>/[^\"]*)\"",
+          "methodsAfter": "^[^\\n]*?\\.Methods\\((?<args>[^)]*)\\)",
+          "defaultMethod": "GET"
+        }
+      ],
+      "prefixes": [
+        { "regex": "(?<object>\\w+)\\s*:?=\\s*\\w+\\.Group\\(\\s*\"(?<prefix>[^\"]*)\"", "scope": "object" }
+      ],
+      "handler": "\\A[^\\n]*?,\\s*(?:\\w+\\.)*(?<name>[A-Za-z_]\\w*)\\s*\\)",
+      "inlineHandler": "\\A\\s*,\\s*func\\s*(?=\\()"
+    },
+    {
+      "name": "Rust (Actix Web, Rocket attributes)",
+      "extensions": [".rs"],
+      "routes": [
+        { "regex": "#\\[(?<method>get|post|put|delete|patch)\\(\\s*\"(?<path>[^\"]*)\"" }
+      ],
+      "handler": "\\A[^\\n]*\\n(?:[ \\t]*#\\[[^\\n]*\\n)*[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+(?<name>\\w+)"
+    },
+    {
+      "name": "Rust (Axum, Actix routes)",
+      "extensions": [".rs"],
+      "routes": [
+        {
+          "regex": "\\.route\\(\\s*\"(?<path>/[^\"]*)\"\\s*,(?<args>(?:[^;()]|\\((?:[^;()]|\\([^;()]*\\))*\\))*)\\)",
+          "handlersFromArgs": "(?:web::)?(?<method>get|post|put|patch|delete)\\(\\s*\\)?\\s*(?:\\.to\\()?\\s*(?<name>[\\w:]+)\\s*\\)"
+        }
+      ]
+    },
+    {
+      "name": "Ruby on Rails / Sinatra / Grape",
+      "extensions": [".rb"],
+      "routes": [
+        { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\s+['\"](?<path>[^'\"]+)['\"]" },
+        { "regex": "^\\s*resources?\\s+:(?<path>\\w+)", "crud": true }
+      ],
+      "handler": "\\A[^\\n]*?(?:to:\\s*['\"][\\w/]+#(?<name>\\w+)['\"])"
+    },
+    {
+      "name": "Laravel / Lumen / Slim",
+      "extensions": [".php"],
+      "routes": [
+        { "regex": "Route::(?<method>get|post|put|delete|patch)\\(\\s*['\"](?<path>[^'\"]*)['\"]" },
+        { "regex": "Route::(?:api)?[Rr]esource\\(\\s*['\"](?<path>[^'\"]+)['\"]", "crud": true },
+        { "regex": "\\$(?<object>app|router|group)->(?<method>get|post|put|delete|patch)\\(\\s*['\"](?<path>/[^'\"]*)['\"]" }
+      ]
+    },
+    {
+      "name": "Symfony",
+      "extensions": [".php"],
+      "routes": [
+        { "regex": "#\\[Route\\(\\s*(?:path:\\s*)?['\"](?<path>[^'\"]*)['\"](?<args>(?:[^\\[\\]]|\\[[^\\]]*\\])*)\\)\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\]\\s*)*(?:public\\s+)?function", "defaultMethod": "GET" },
+        { "regex": "@Route\\(\\s*\"(?<path>[^\"]*)\"(?<args>[^)]*)\\)\\s*\\*/\\s*(?:public\\s+)?function", "defaultMethod": "GET" }
+      ],
+      "prefixes": [
+        { "regex": "#\\[Route\\(\\s*(?:path:\\s*)?['\"](?<prefix>[^'\"]*)['\"](?:[^\\[\\]]|\\[[^\\]]*\\])*\\)\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\]\\s*)*(?:final\\s+|abstract\\s+)*class\\b", "scope": "following" }
+      ],
+      "handler": "\\A\\s*(?<name>\\w+)\\s*\\("
+    },
+    {
+      "name": "Phoenix (Elixir)",
+      "extensions": [".ex"],
+      "files": "(?i)router\\.ex$",
+      "routes": [
+        { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\s+\"(?<path>[^\"]*)\"\\s*,\\s*\\w+(?:\\.\\w+)*\\s*,\\s*:(?<handler>\\w+)" },
+        { "regex": "^\\s*resources\\s+\"(?<path>[^\"]+)\"", "crud": true }
+      ]
+    },
+    {
+      "name": "Play (Scala, Java)",
+      "extensions": [""],
+      "files": "^routes$",
+      "routes": [
+        { "regex": "^\\s*(?<method>GET|POST|PUT|PATCH|DELETE)\\s+(?<path>/\\S*)" }
+      ]
+    },
+    {
+      "name": "Vapor (Swift)",
+      "extensions": [".swift"],
+      "routes": [
+        { "regex": "\\b(?<object>app|routes|router|group|grouped|\\w+Routes)\\.(?<method>get|post|put|patch|delete)\\((?<args>[^){]*)\\)", "pathFromArgs": "\"(?<path>[^\"]*)\"", "joinPaths": true }
+      ]
+    },
+    {
+      "name": "Dart (shelf_router, dart_frog)",
+      "extensions": [".dart"],
+      "routes": [
+        { "regex": "\\b(?<object>app|router|r)\\.(?<method>get|post|put|delete|patch)\\(\\s*['\"](?<path>/[^'\"]*)['\"]" }
+      ]
+    },
+    {
+      "name": "C++ (Crow, Drogon, cpp-httplib, Pistache, Oat++)",
+      "extensions": [".cpp", ".cc", ".cxx", ".hpp", ".h"],
+      "routes": [
+        { "regex": "CROW_ROUTE\\(\\s*\\w+\\s*,\\s*\"(?<path>[^\"]*)\"\\s*\\)", "methodsAfter": "^\\s*\\.methods\\((?<args>[^)]*)\\)", "defaultMethod": "GET" },
+        { "regex": "(?:ADD_METHOD_TO|METHOD_ADD|ADD_METHOD_VIA_REGEX)\\(\\s*[\\w:]+\\s*,\\s*\"(?<path>[^\"]*)\"(?<args>[^)]*)\\)", "defaultMethod": "GET" },
+        { "regex": "\\b(?<object>svr|server|srv|app)\\.(?<method>Get|Post|Put|Patch|Delete)\\(\\s*\"(?<path>/[^\"]*)\"" },
+        { "regex": "Routes::(?<method>Get|Post|Put|Patch|Delete)\\(\\s*\\w+\\s*,\\s*\"(?<path>/[^\"]*)\"" },
+        { "regex": "ENDPOINT\\(\\s*\"(?<method>GET|POST|PUT|PATCH|DELETE)\"\\s*,\\s*\"(?<path>[^\"]*)\"" }
+      ]
+    },
+    {
+      "name": "Clojure (Compojure)",
+      "extensions": [".clj"],
+      "routes": [
+        { "regex": "\\((?<method>GET|POST|PUT|PATCH|DELETE)\\s+\"(?<path>/[^\"]*)\"" }
+      ]
+    }
+  ]
+}
