@@ -195,7 +195,10 @@ def test_env_flags_spec_and_passthrough():
            "env": {"GC_BASE_URL": "http://gw:8080"},
            "env_passthrough": ["GC_TOKEN", "GC_MISSING"]}
     flags = _env_flags(cfg, environ={"GC_TOKEN": "jwt123"})
-    assert flags == ["-e", "GC_BASE_URL=http://gw:8080", "-e", "GC_TOKEN=jwt123"]
+    # a passed-through secret goes by name only: docker reads its value from
+    # its own environment, so it never shows on a command line
+    assert flags == ["-e", "GC_BASE_URL=http://gw:8080", "-e", "GC_TOKEN"]
+    assert not any("jwt123" in f for f in flags)
     # unset host vars are simply omitted, never passed empty
     assert not any("GC_MISSING" in f for f in flags)
 
@@ -206,7 +209,7 @@ def test_env_flags_host_wins_over_spec():
            "env_passthrough": ["GC_TOKEN"]}
     flags = _env_flags(cfg, environ={"GC_TOKEN": "fresh"})
     # docker uses the LAST -e occurrence -> the host value wins
-    assert flags[-1] == "GC_TOKEN=fresh"
+    assert flags[-1] == "GC_TOKEN"
 
 
 def test_build_command_env_flags_before_image():
@@ -286,3 +289,21 @@ def _run_all() -> int:
 if __name__ == "__main__":
     import sys
     sys.exit(_run_all())
+
+
+def test_container_name_uses_the_run_id_when_given():
+    from analyzer.collect.loadgen import RUN_ID_VARIABLE, container_name
+    assert container_name({RUN_ID_VARIABLE: "abc123"}).startswith(
+        "microservice-scripts-k6-abc123-")
+    # anything docker wouldn't accept in a name falls back to the pid
+    assert container_name({RUN_ID_VARIABLE: "x; rm -rf /"}).startswith(
+        f"microservice-scripts-k6-{os.getpid()}-")
+
+
+def test_load_timeout_follows_the_planned_length():
+    from analyzer.collect.loadgen import load_timeout
+    assert load_timeout({"vus": 5, "duration": "1m"}) == 1800.0
+    assert load_timeout({"vus": 5, "duration": "1h"}) == 3600 * 1.1 + 300
+    assert load_timeout({"stages": [{"duration": "40m", "target": 5},
+                                    {"duration": "20m", "target": 5}]}) == 3600 * 1.1 + 300
+    assert load_timeout({"script": "own.js"}) == 1800.0

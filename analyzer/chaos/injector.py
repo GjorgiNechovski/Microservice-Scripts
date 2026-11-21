@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from analyzer.chaos.dockercli import ContainerState, Docker, DockerError
+from analyzer.collect.loadgen import no_interrupt
 from analyzer.collect.collector import (
     _FALLBACK_ARRIVAL,
     _FALLBACK_FAILURE,
@@ -314,8 +315,8 @@ def measure_mttr(docker: Docker, component: str, containers: list,
                 pre = docker.inspect(target)
 
             t0 = time.monotonic()
-            docker.kill(target)
             try:
+                docker.kill(target)
                 # GUARANTEE recovery ourselves -- never trust the declared
                 # restart policy to fire. In testing, `docker kill` left
                 # `unless-stopped` containers dead (Exited 137); passively
@@ -334,9 +335,10 @@ def measure_mttr(docker: Docker, component: str, containers: list,
                 recovered = _wait(
                     lambda: _ready(docker, target, pre.started, port), timeout)
             except BaseException:
-                # Interrupted between the kill and the recovery (Ctrl+C, or the
-                # setup app's Stop button): never leave the component down.
-                with contextlib.suppress(Exception):
+                # Interrupted during the kill or before the recovery (Ctrl+C,
+                # or the setup app's Stop button): never leave the component
+                # down, and don't let a second Ctrl+C cut this short.
+                with no_interrupt(), contextlib.suppress(Exception):
                     docker.start(target)
                 raise
             elapsed = time.monotonic() - t0

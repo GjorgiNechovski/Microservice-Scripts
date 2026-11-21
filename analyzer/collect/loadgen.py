@@ -16,8 +16,11 @@ own ``options.stages`` without k6's "duration and stages both set" conflict.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
+import re
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -147,16 +150,18 @@ def _env_flags(cfg: dict, environ=None) -> list:
     * ``env_passthrough`` (a list) -> forwarded from the HOST environment when
       set there. This is the place for secrets (auth tokens, passwords): they
       stay out of the tracked spec file. Host values win over ``env`` ones
-      (docker uses the last ``-e`` occurrence).
+      (docker uses the last ``-e`` occurrence). Only the NAME goes on the
+      command line (``-e KEY``): docker reads the value from its own
+      environment, which ``docker run`` inherits, so a secret never shows in
+      ``ps`` or in the k6 container's command.
     """
     environ = os.environ if environ is None else environ
     flags = []
     for key, value in (cfg.get("env") or {}).items():
         flags += ["-e", f"{key}={value}"]
     for key in cfg.get("env_passthrough", []):
-        value = environ.get(key)
-        if value is not None:
-            flags += ["-e", f"{key}={value}"]
+        if environ.get(key) is not None:
+            flags += ["-e", key]
     return flags
 
 
@@ -204,26 +209,69 @@ def measurement_window(seconds: float) -> str:
     return f"{max(60, math.ceil(seconds))}s"
 
 
+#: Set by whoever starts the pipeline (the setup app) to find its k6
+#: containers by name; the Python process id otherwise. A launcher such as
+#: Windows' ``py -3`` runs Python under another pid than the one it reports.
+RUN_ID_VARIABLE = "MICROSERVICE_SCRIPTS_RUN_ID"
+
+_NAME_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def container_name(environ=None) -> str:
+    """A unique name for one k6 container: microservice-scripts-k6-<run>-<ns>."""
+    environ = os.environ if environ is None else environ
+    run = environ.get(RUN_ID_VARIABLE, "")
+    if not _NAME_PART.fullmatch(run):
+        run = str(os.getpid())
+    return f"microservice-scripts-k6-{run}-{time.time_ns()}"
+
+
+def load_timeout(cfg: dict, floor: float = 1800.0) -> float:
+    """How long to let k6 run before giving up on it: the planned length plus
+    room for setup and the graceful stop, never less than ``floor`` (a script
+    that sets its own length is given the floor)."""
+    from analyzer.validity import planned_seconds
+    planned = planned_seconds(cfg)
+    return max(floor, planned * 1.1 + 300) if planned else floor
+
+
+@contextlib.contextmanager
+def no_interrupt():
+    """A second Ctrl+C can't cut the clean-up short (main thread only)."""
+    try:
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except ValueError:               # not the main thread: nothing to guard
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def run_load(cfg: dict, project_dir: str = ".", image: str = _K6_IMAGE,
-             timeout: float = 1800.0) -> LoadRun:
+             timeout: float | None = None) -> LoadRun:
     """Run the k6 load script to completion; return timing + exit status.
 
     If the run is interrupted (Ctrl+C, a timeout, the setup app's Stop), the
     k6 container is removed: stopping the ``docker run`` client alone would
-    leave it loading the system until its stages end.
+    leave it loading the system until its stages end. ``timeout`` defaults to
+    :func:`load_timeout`.
     """
-    name = f"microservice-scripts-k6-{os.getpid()}-{time.time_ns()}"
+    name = container_name()
     command = build_command(cfg, project_dir, image, name=name)
     start = time.time()
     try:
         proc = subprocess.run(command, capture_output=True, text=True,
-                              timeout=timeout)
+                              timeout=load_timeout(cfg) if timeout is None
+                              else timeout)
     except BaseException:
-        try:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True,
-                           timeout=60)
-        except Exception:
-            pass
+        with no_interrupt():
+            try:
+                subprocess.run(["docker", "rm", "-f", name],
+                               capture_output=True, timeout=60)
+            except Exception:
+                pass
         raise
     return LoadRun(proc.returncode, time.time() - start, command,
                    (proc.stdout or "") + (proc.stderr or ""))
