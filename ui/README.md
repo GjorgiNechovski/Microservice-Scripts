@@ -75,6 +75,10 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    availability figure. Each starts from what its requests touch: the gateways
    they pass, the service that handles them, and what that service depends on
    (`depends_on` and the service names in its environment), each with its reason.
+   A service no feature reaches stops the step: the load test would send it
+   nothing, so it couldn't be measured and the run would be marked not to be
+   trusted. Pick one of its routes, add it to a feature, or leave it out of the
+   analysis with one click.
 6. **Users.** How many virtual users to hold, one level after another (several
    make a sweep), for how long, and the pause between a user's requests.
 7. **Save.** The spec and the load script (`load.js`) are previewed, the spec is

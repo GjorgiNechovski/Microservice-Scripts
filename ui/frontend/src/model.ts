@@ -242,9 +242,28 @@ export function routesBlockers(state: WizardState): string[] {
 export function featuresBlockers(state: WizardState): string[] {
   const services = state.read?.draft?.services ?? {};
   const picked = selectedRoutes(state.routes, state.components);
-  return featureList(picked)
-    .filter((f) => featureComponents(f.name, picked, state.features, state.components, services).length === 0)
-    .map((f) => `Pick the components feature '${f.name}' needs.`);
+  return [
+    ...featureList(picked)
+      .filter((f) => featureComponents(f.name, picked, state.features, state.components, services).length === 0)
+      .map((f) => `Pick the components feature '${f.name}' needs.`),
+    ...unreachedServices(state).map(
+      (c) => `No feature reaches ${c.name}: add it to one, or leave it out of the analysis (shown above).`,
+    ),
+  ];
+}
+
+/**
+ * Services no feature needs: no request of the load test reaches them, so the
+ * run can't measure them, and the analyzer marks a run with an unmeasured
+ * service as not to be trusted.
+ */
+export function unreachedServices(state: WizardState): DraftComponent[] {
+  const services = state.read?.draft?.services ?? {};
+  const picked = selectedRoutes(state.routes, state.components);
+  const needed = new Set(
+    featureList(picked).flatMap((f) => featureComponents(f.name, picked, state.features, state.components, services)),
+  );
+  return state.components.filter((c) => c.kind === 'service' && !needed.has(c.id));
 }
 
 /** The chosen compose projects that were read, as the app is started: same files, same -p name. */

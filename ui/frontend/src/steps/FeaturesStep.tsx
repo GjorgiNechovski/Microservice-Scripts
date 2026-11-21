@@ -2,7 +2,7 @@ import { Alert, Badge, Button, Group, MultiSelect, Paper, Stack, Text, TextInput
 import { IconArrowBackUp } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { KINDS } from '../kinds';
-import type { WizardState } from '../model';
+import { unreachedServices, type WizardState } from '../model';
 import {
   componentOf,
   featureComponents,
@@ -110,7 +110,41 @@ export function FeaturesStep({ state, setState }: Props) {
       {features.length === 0 && (
         <Alert color="yellow">Pick at least one route in the previous step: each one belongs to a feature.</Alert>
       )}
+
+      {features.length > 0 && <Unreached state={state} setState={setState} />}
     </Stack>
+  );
+}
+
+/**
+ * Services the load test never reaches: the analyzer can't measure them and
+ * marks the whole run as not to be trusted, so say it before the run.
+ */
+function Unreached({ state, setState }: Props) {
+  const unreached = unreachedServices(state);
+  if (unreached.length === 0) return null;
+  const leaveOut = (id: string) =>
+    setState((s) => ({ ...s, components: s.components.map((c) => (c.id === id ? { ...c, kind: 'notModelled' } : c)) }));
+  return (
+    <Alert color="red" title="No request reaches these services" data-unreached>
+      <Stack gap="xs">
+        <Text size="sm">
+          No feature needs them, so the load test sends them nothing and the run can&apos;t measure them. The analyzer
+          then marks the whole run as not to be trusted. For each one: pick one of its routes in the previous step, add
+          it to a feature above if a feature does reach it (through a queue, say), or leave it out of the analysis.
+        </Text>
+        {unreached.map((c) => (
+          <Group key={c.id} justify="space-between" wrap="nowrap">
+            <Text size="sm" fw={600}>
+              {c.name}
+            </Text>
+            <Button size="xs" variant="light" color="red" onClick={() => leaveOut(c.id)}>
+              Leave it out of the analysis
+            </Button>
+          </Group>
+        ))}
+      </Stack>
+    </Alert>
   );
 }
 
