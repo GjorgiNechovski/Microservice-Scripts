@@ -146,4 +146,33 @@ public class ComponentDrafterTests
 
     private static ComposeProject Inline(string name, string json) =>
         ComposeProject.Parse(json, $"/projects/{name}", [$"/projects/{name}/compose.yaml"]);
+
+    [Fact]
+    public void A_service_calling_one_in_another_project_depends_on_it()
+    {
+        var auth = Inline("shop-auth", """
+            {
+              "name": "shop-auth",
+              "networks": { "default": { "name": "shop", "external": true } },
+              "services": {
+                "authsvc": { "build": { "context": "/x/auth" }, "networks": { "default": null } }
+              }
+            }
+            """);
+        var orders = Inline("shop-orders", """
+            {
+              "name": "shop-orders",
+              "networks": { "default": { "name": "shop", "external": true } },
+              "services": {
+                "orders": { "build": { "context": "/x/orders" }, "environment": { "AUTH_URL": "http://authsvc:8000" },
+                            "networks": { "default": null } }
+              }
+            }
+            """);
+
+        var dependency = Assert.Single(Get(Fixtures.Draft(auth, orders), "orders").DependsOn);
+
+        Assert.Equal("shop-auth/authsvc", dependency.Id);
+        Assert.Contains("AUTH_URL", dependency.Via);
+    }
 }

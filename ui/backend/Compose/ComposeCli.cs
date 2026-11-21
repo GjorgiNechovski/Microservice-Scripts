@@ -77,17 +77,30 @@ public sealed class ComposeCli(IProcessRunner runner)
             return [];
         }
 
-        using var doc = JsonDocument.Parse(result.StdOut);
         var projects = new List<RunningProject>();
-        foreach (var p in doc.RootElement.EnumerateArray())
+        try
         {
-            var files = (p.TryGetProperty("ConfigFiles", out var cf) ? cf.GetString() ?? "" : "")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            projects.Add(new RunningProject(
-                p.GetProperty("Name").GetString() ?? "",
-                p.TryGetProperty("Status", out var st) ? st.GetString() ?? "" : "",
-                files,
-                files.Length > 0 ? Path.GetDirectoryName(files[0]) : null));
+            using var doc = JsonDocument.Parse(result.StdOut);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            foreach (var p in doc.RootElement.EnumerateArray())
+            {
+                var files = (p.TryGetProperty("ConfigFiles", out var cf) ? cf.GetString() ?? "" : "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                projects.Add(new RunningProject(
+                    p.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
+                    p.TryGetProperty("Status", out var st) ? st.GetString() ?? "" : "",
+                    files,
+                    files.Length > 0 ? Path.GetDirectoryName(files[0]) : null));
+            }
+        }
+        catch (JsonException)
+        {
+            // an older Compose, or a warning printed first: no list rather than an error on every page that asks
+            return [];
         }
 
         return projects;

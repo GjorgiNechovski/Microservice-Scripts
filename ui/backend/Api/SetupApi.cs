@@ -10,7 +10,9 @@ using MicroserviceScripts.Ui.Spec;
 
 namespace MicroserviceScripts.Ui.Api;
 
-public sealed record ScanRequest(IReadOnlyList<string> Folders, IReadOnlyList<string>? ExtraFiles);
+/// <param name="KnownProjects">Compose projects Docker knows that the user chose, kept as they were started.</param>
+public sealed record ScanRequest(
+    IReadOnlyList<string> Folders, IReadOnlyList<string>? ExtraFiles, IReadOnlyList<KnownProject>? KnownProjects = null);
 
 public sealed record DraftRequest(IReadOnlyList<ProjectSelection> Projects);
 
@@ -71,7 +73,8 @@ public static class SetupApi
             }
         });
 
-        api.MapPost("/scan", (ScanRequest request) => FolderScanner.Scan(request.Folders, request.ExtraFiles));
+        api.MapPost("/scan", (ScanRequest request) =>
+            FolderScanner.Scan(request.Folders, request.ExtraFiles, request.KnownProjects));
 
         api.MapGet("/compose/projects", (ComposeCli compose, CancellationToken ct) => compose.ListAsync(ct));
 

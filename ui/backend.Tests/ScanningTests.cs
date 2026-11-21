@@ -62,4 +62,20 @@ public sealed class ScanningTests : IDisposable
         Assert.Equal(("stack.yml", ComposeFileRole.Base, true), (file.Name, file.Role, file.Selected));
         Assert.Contains(result.Warnings, w => w.Contains("nope.yml"));
     }
+
+    [Fact]
+    public void A_project_docker_knows_keeps_its_name_and_its_files_together()
+    {
+        // started as: docker compose -p shop -f shop-app/compose.yaml -f ops/monitoring.yml up -d
+        Touch("shop-app/compose.yaml");
+        Touch("ops/monitoring.yml");
+        var result = FolderScanner.Scan([], [],
+            [new KnownProject("shop", [Path.Combine(_root, "shop-app", "compose.yaml"), Path.Combine(_root, "ops", "monitoring.yml")])]);
+
+        var project = Assert.Single(result.Projects);
+        Assert.Equal("shop", project.Name);
+        Assert.EndsWith("shop-app", project.Directory);
+        Assert.Equal(["compose.yaml", "monitoring.yml"], project.Files.Select(f => f.Name));
+        Assert.All(project.Files, f => Assert.True(f.Selected));
+    }
 }

@@ -33,6 +33,7 @@ import type {
   ProjectSelection,
   RunState,
   ScannedFile,
+  KnownProject,
   ScanResult,
   SpecComponent,
   SpecDocument,
@@ -56,6 +57,8 @@ export type WizardState = {
   folders: string[];
   /** Compose files the user pointed at directly. */
   extraFiles: string[];
+  /** Compose projects chosen from Docker's list: their name and files, as they were started. */
+  knownProjects: KnownProject[];
   scan: ScanResult | null;
   projects: ProjectChoice[];
   read: DraftResponse | null;
@@ -89,6 +92,7 @@ export type WizardState = {
 export const initialState: WizardState = {
   folders: [],
   extraFiles: [],
+  knownProjects: [],
   scan: null,
   projects: [],
   read: null,
@@ -139,7 +143,7 @@ export function stepStatus(
       : { ready: false, message: 'Fix the items marked in red, then press "Check again".' };
   }
   if (step === 1) {
-    if (state.folders.length + state.extraFiles.length === 0) {
+    if (state.folders.length + state.extraFiles.length + state.knownProjects.length === 0) {
       return { ready: false, message: 'Add the folder your app is in to begin.' };
     }
     if (!state.scan) return { ready: false, message: 'Searching the folders…' };
@@ -293,7 +297,8 @@ export function mergeScan(previous: ProjectChoice[], scan: ScanResult): ProjectC
     const before = previous.find((q) => q.directory === p.directory);
     return {
       directory: p.directory,
-      name: before?.name ?? '',
+      // the user's own choice first, then the name Docker started it under
+      name: before ? before.name : (p.name ?? ''),
       files: p.files.map((f) => {
         const known = before?.files.find((g) => g.path === f.path);
         return known ? { ...f, selected: known.selected } : f;

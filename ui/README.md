@@ -32,12 +32,14 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    or one folder that holds them all. Only those folders are searched for compose
    files, skipping `node_modules`, `.git`, build output and the like. You can
    also pick a compose project Docker already knows (one started on this machine at
-   least once; one never started isn't listed), or point at a compose file
+   least once; one never started isn't listed), which keeps the name it was
+   started under (`-p`) and its files together, or point at a compose file
    directly, whatever its name. Compose reads the chosen files itself
    (`docker compose config`), so overlays, profiles and `.env` variables work as
    they do for `docker compose up`. An app split over several repositories becomes
    several compose projects; they must share a docker network, and the app says
-   so if they don't.
+   so if they don't. A service that calls one in another of the projects by
+   name, over the shared network, depends on it.
 3. **Components.** Every compose service is sorted into *service*,
    *infrastructure*, *not modelled* (frontends, admin UIs, monitoring, one-off
    jobs) or *unsure*, with the reason shown. Replicas (`db` and `db-2`) and

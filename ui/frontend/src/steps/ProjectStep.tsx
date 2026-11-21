@@ -16,10 +16,11 @@ import {
 } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconFile, IconFolderPlus, IconNetwork } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { FolderPicker } from '../components/FolderPicker';
 import { mergeScan, selections, withRead, type WizardState } from '../model';
+import type { KnownProject } from '../types';
 
 type Props = {
   state: WizardState;
@@ -33,10 +34,14 @@ export function ProjectStep({ state, setState }: Props) {
   const [showRunning, setShowRunning] = useState(false);
   const [filePath, setFilePath] = useState('');
 
+  // only the latest search counts: an earlier, slower one finishing last would undo it
+  const latestScan = useRef(0);
   const scan = useMutation({
-    mutationFn: () => api.scan(state.folders, state.extraFiles),
-    onSuccess: (result) =>
-      setState((s) => ({ ...s, scan: result, projects: mergeScan(s.projects, result), read: null, components: [] })),
+    mutationFn: async (seq: number) => ({ seq, result: await api.scan(state.folders, state.extraFiles, state.knownProjects) }),
+    onSuccess: ({ seq, result }) => {
+      if (seq !== latestScan.current) return;
+      setState((s) => ({ ...s, scan: result, projects: mergeScan(s.projects, result), read: null, components: [] }));
+    },
   });
   const running = useQuery({ queryKey: ['compose-projects'], queryFn: api.composeProjects, enabled: showRunning });
   const read = useMutation({
@@ -47,13 +52,20 @@ export function ProjectStep({ state, setState }: Props) {
   // search again whenever the folders or pointed-at files change
   const { mutate: rescan } = scan;
   useEffect(() => {
-    if (state.folders.length + state.extraFiles.length > 0) rescan();
-  }, [state.folders, state.extraFiles, rescan]);
+    if (state.folders.length + state.extraFiles.length + state.knownProjects.length > 0) rescan(++latestScan.current);
+  }, [state.folders, state.extraFiles, state.knownProjects, rescan]);
 
   const addFolder = (path: string) =>
     setState((s) => (s.folders.includes(path) ? s : { ...s, folders: [...s.folders, path] }));
   const addFiles = (files: string[]) =>
     setState((s) => ({ ...s, extraFiles: [...new Set([...s.extraFiles, ...files])] }));
+  // as Docker started it: under its own name (-p), its files together even when they sit in different folders
+  const addKnown = (project: KnownProject) =>
+    setState((s) =>
+      s.knownProjects.some((k) => k.name === project.name)
+        ? s
+        : { ...s, knownProjects: [...s.knownProjects, project] },
+    );
   const toggleFile = (directory: string, path: string, selected: boolean) =>
     setState((s) => ({
       ...s,
@@ -103,6 +115,17 @@ export function ProjectStep({ state, setState }: Props) {
               {f}
             </Pill>
           ))}
+          {state.knownProjects.map((k) => (
+            <Pill
+              key={k.name}
+              withRemoveButton
+              onRemove={() =>
+                setState((s) => ({ ...s, knownProjects: s.knownProjects.filter((x) => x.name !== k.name), read: null }))
+              }
+            >
+              project {k.name}
+            </Pill>
+          ))}
         </Group>
         <Group gap="xs">
           <Button leftSection={<IconFolderPlus size={16} />} onClick={() => setPicking(true)}>
@@ -136,7 +159,7 @@ export function ProjectStep({ state, setState }: Props) {
                       {p.files.join(', ')}
                     </Text>
                   </div>
-                  <Button size="xs" variant="light" disabled={p.files.length === 0} onClick={() => addFiles(p.files)}>
+                  <Button size="xs" variant="light" disabled={p.files.length === 0} onClick={() => addKnown({ name: p.name, files: p.files })}>
                     Use its files
                   </Button>
                 </Group>

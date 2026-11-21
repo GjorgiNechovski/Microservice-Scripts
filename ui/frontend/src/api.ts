@@ -12,6 +12,7 @@ import type {
   PreflightResult,
   PrerequisiteCheck,
   ResultList,
+  KnownProject,
   ResultView,
   ProjectSelection,
   RunningProject,
@@ -96,7 +97,8 @@ export const api = {
   prerequisites: () => call<PrerequisiteCheck[]>('GET', '/prerequisites'),
   folders: (path?: string) =>
     call<FolderListing>('GET', `/folders${path ? `?path=${encodeURIComponent(path)}` : ''}`),
-  scan: (folders: string[], extraFiles: string[]) => call<ScanResult>('POST', '/scan', { folders, extraFiles }),
+  scan: (folders: string[], extraFiles: string[], knownProjects: KnownProject[]) =>
+    call<ScanResult>('POST', '/scan', { folders, extraFiles, knownProjects }),
   composeProjects: () => call<RunningProject[]>('GET', '/compose/projects'),
   draft: (projects: ProjectSelection[]) => call<DraftResponse>('POST', '/draft', { projects }),
   preview: (spec: SpecDocument, script: LoadScript | null) =>

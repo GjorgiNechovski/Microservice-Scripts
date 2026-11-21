@@ -20,7 +20,11 @@ export type ComposeFileRole = 'base' | 'override' | 'overlay';
 
 export type ScannedFile = { path: string; name: string; role: ComposeFileRole; selected: boolean };
 
-export type ScannedProject = { directory: string; files: ScannedFile[] };
+/** name: the name Docker started it under (-p), for a project chosen from Docker's list. */
+export type ScannedProject = { directory: string; files: ScannedFile[]; name?: string | null };
+
+/** A compose project Docker knows, taken as it was started: its name and its files. */
+export type KnownProject = { name: string; files: string[] };
 
 export type ScanResult = { projects: ScannedProject[]; dockerfiles: string[]; warnings: string[] };
 

@@ -5,7 +5,11 @@ namespace MicroserviceScripts.Ui.Compose;
 public sealed record ScannedFile(string Path, string Name, ComposeFileRole Role, bool Selected);
 
 /// <summary>The compose files found in one folder: a candidate compose project.</summary>
-public sealed record ScannedProject(string Directory, IReadOnlyList<ScannedFile> Files);
+/// <param name="Name">The name it was started under (-p), for a project Docker already knows.</param>
+public sealed record ScannedProject(string Directory, IReadOnlyList<ScannedFile> Files, string? Name = null);
+
+/// <summary>A compose project Docker already knows: its name and files, which can sit in different folders.</summary>
+public sealed record KnownProject(string Name, IReadOnlyList<string> Files);
 
 public sealed record ScanResult(
     IReadOnlyList<ScannedProject> Projects, IReadOnlyList<string> Dockerfiles, IReadOnlyList<string> Warnings);
@@ -33,8 +37,14 @@ public static class FolderScanner
     /// Compose files the user pointed at directly, whatever they're called; they
     /// join their folder's project and are always selected.
     /// </param>
-    public static ScanResult Scan(IEnumerable<string> folders, IEnumerable<string>? extraFiles = null)
+    /// <param name="known">
+    /// Projects Docker already knows, taken as they were started: one project
+    /// each, in the folder of its first file, under its name.
+    /// </param>
+    public static ScanResult Scan(
+        IEnumerable<string> folders, IEnumerable<string>? extraFiles = null, IEnumerable<KnownProject>? known = null)
     {
+        folders = folders.Select(f => FolderBrowser.ExpandHome(f.Trim()));
         var warnings = new List<string>();
         var byDirectory = new SortedDictionary<string, List<ScannedFile>>(StringComparer.Ordinal);
         var dockerfiles = new SortedSet<string>(StringComparer.Ordinal);
@@ -98,14 +108,39 @@ public static class FolderScanner
             }
 
             var dir = Path.GetDirectoryName(extra)!;
-            var hasBase = byDirectory.TryGetValue(dir, out var known)
-                && known.Any(f => f.Role == ComposeFileRole.Base);
+            var hasBase = byDirectory.TryGetValue(dir, out var there)
+                && there.Any(f => f.Role == ComposeFileRole.Base);
             var role = ComposeFiles.RoleOf(Path.GetFileName(extra))
                 ?? (hasBase ? ComposeFileRole.Overlay : ComposeFileRole.Base);
             Add(byDirectory, dir, extra, role, forceSelected: true);
         }
 
-        var projects = byDirectory.Select(kv => new ScannedProject(kv.Key, Order(kv.Value))).ToList();
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var project in known ?? [])
+        {
+            var files = project.Files.Select(f => Path.GetFullPath(FolderBrowser.ExpandHome(f.Trim()))).ToList();
+            var missing = files.Where(f => !File.Exists(f)).ToList();
+            if (files.Count == 0 || missing.Count > 0)
+            {
+                warnings.Add($"{project.Name}: no such file: {string.Join(", ", missing)}");
+                continue;
+            }
+
+            // Compose runs a project from the folder of its first file
+            var dir = Path.GetDirectoryName(files[0])!;
+            for (var i = 0; i < files.Count; i++)
+            {
+                var role = ComposeFiles.RoleOf(Path.GetFileName(files[i]))
+                    ?? (i == 0 ? ComposeFileRole.Base : ComposeFileRole.Overlay);
+                Add(byDirectory, dir, files[i], i == 0 ? ComposeFileRole.Base : role, forceSelected: true);
+            }
+
+            names[dir] = project.Name;
+        }
+
+        var projects = byDirectory
+            .Select(kv => new ScannedProject(kv.Key, Order(kv.Value), names.GetValueOrDefault(kv.Key)))
+            .ToList();
         return new ScanResult(projects, dockerfiles.ToList(), warnings);
     }
 

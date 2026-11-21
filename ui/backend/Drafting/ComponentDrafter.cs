@@ -125,6 +125,8 @@ public sealed class ComponentDrafter(
             LinkDependencies(works.Where(w => w.Project == project).ToList());
         }
 
+        LinkAcrossProjects(works);
+
         var unfolded = works.ToDictionary(w => w.Id, w => ToRecord(w, includeFolds: false, w.DependsOn));
         foreach (var project in projects)
         {
@@ -267,6 +269,41 @@ public sealed class ComponentDrafter(
                     if (NamesHost(value, other.Service.Name))
                     {
                         w.DependsOn.Add(new Dependency(other.Id, $"environment {key}"));
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// An app split over several compose projects calls across them by service
+    /// name over a shared network (orders' AUTH_URL=http://authsvc:8000, authsvc
+    /// in the other project). A name in the service's own project, or in more
+    /// than one other project, isn't taken: it can't be told which one is meant.
+    /// </summary>
+    private static void LinkAcrossProjects(List<Work> works)
+    {
+        if (works.Select(w => w.Project).Distinct().Count() < 2)
+        {
+            return;
+        }
+
+        var networks = works.ToDictionary(w => w, w => w.Service.Networks.Select(w.Project.NetworkName).ToHashSet());
+        foreach (var w in works)
+        {
+            var reachable = works
+                .Where(o => o.Project != w.Project && networks[o].Overlaps(networks[w]))
+                .GroupBy(o => o.Service.Name)
+                .Where(g => g.Count() == 1 && w.Project.Services.All(s => s.Name != g.Key))
+                .Select(g => g.Single())
+                .ToList();
+            foreach (var (key, value) in w.Service.Environment)
+            {
+                foreach (var other in reachable.Where(o => w.DependsOn.All(d => d.Id != o.Id)))
+                {
+                    if (NamesHost(value, other.Service.Name))
+                    {
+                        w.DependsOn.Add(new Dependency(other.Id, $"environment {key} (project {other.Project.Name})"));
                     }
                 }
             }
