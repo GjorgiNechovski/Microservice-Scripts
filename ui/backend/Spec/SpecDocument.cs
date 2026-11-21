@@ -44,7 +44,8 @@ public sealed record SpecDocument(
     SpecLoad? Load = null)
 {
     private static readonly Regex ComponentName = new(@"^[A-Za-z0-9][A-Za-z0-9_.-]*$");
-    private static readonly Regex Duration = new(@"^(\d+(ms|s|m|h))+$");
+    // what the analyzer reads back (validity.duration_seconds): hours, minutes, seconds, in that order
+    private static readonly Regex Duration = new(@"^(?=\d)(\d+h)?(\d+m)?(\d+s)?$");
 
     public IEnumerable<SpecComponent> Components => Services.Concat(Infrastructure);
 
@@ -118,7 +119,7 @@ public sealed record SpecDocument(
 
             if (!Duration.IsMatch(load.Duration))
             {
-                problems.Add($"'{load.Duration}' isn't a duration k6 understands: write it like 2m, 90s or 1m30s.");
+                problems.Add($"'{load.Duration}' isn't a duration the analyzer reads: write it like 2m, 90s or 1h30m (hours, minutes, seconds, in that order).");
             }
         }
 

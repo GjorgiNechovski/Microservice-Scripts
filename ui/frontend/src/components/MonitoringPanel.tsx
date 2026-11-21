@@ -75,8 +75,9 @@ export function MonitoringPanel({ appNetworks, namespace, onReady }: Props) {
       appNetwork: network,
       traces: (current?.traces ?? false) && s.hasKey,
       honeycombKey: null,
-      scrapeDir: current?.scrapeDir ?? null,
-      namespace: current?.namespace || namespace,
+      // the scrape jobs and name in the current .env belong to the app it was written for
+      scrapeDir: current?.appNetwork === network ? (current?.scrapeDir ?? null) : null,
+      namespace: (current?.appNetwork === network && current?.namespace) || namespace,
     });
   }, [s, settings, appNetworks, namespace]);
 

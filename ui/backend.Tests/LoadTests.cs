@@ -149,13 +149,33 @@ public class LoadTests
                 new Dictionary<string, string> { ["BASE_URL"] = "http://localhost:9000", ["THINK_TIME"] = "0" },
                 [LoadScript.PasswordVariable]));
 
-        var toml = TomlSpecWriter.Write(spec);
+        var toml = TomlSpecWriter.Write(spec, dockerDesktop: false);
 
         Assert.Contains("[load]\nscript = \"load.js\"\nvus = [1, 2, 5]\nduration = \"2m\"\n", toml);
         Assert.Contains("env = { BASE_URL = \"http://localhost:9000\", THINK_TIME = \"0\" }", toml);
         Assert.Contains("env_passthrough = [\"LOGIN_PASSWORD\"]", toml);
         Assert.Contains("browse = [\"api\", \"db\"]", toml);
         Assert.Contains("vus = 5\n", TomlSpecWriter.Write(spec with { Load = spec.Load! with { Users = [5] } }));
+        var check = await Fixtures.PythonCheckAsync(toml);
+        Assert.True(check is null || check.Ok, check?.Error);
+    }
+
+    [Fact]
+    public async Task On_Docker_Desktop_k6_reaches_the_app_through_the_host()
+    {
+        var spec = new SpecDocument(
+            "Shop", ["shop"], [new("api", "shop", "api", 8000)], [],
+            Operations: new Dictionary<string, IReadOnlyList<string>> { ["browse"] = ["api"] },
+            Load: new SpecLoad("load.js", [5], "1m",
+                new Dictionary<string, string> { ["BASE_URL"] = "http://localhost:9000", ["THINK_TIME"] = "0" }));
+
+        var toml = TomlSpecWriter.Write(spec, dockerDesktop: true);
+
+        Assert.Contains("docker_network = \"bridge\"\n", toml);
+        Assert.Contains("env = { BASE_URL = \"http://host.docker.internal:9000\", THINK_TIME = \"0\" }", toml);
+        Assert.Equal("http://host.docker.internal:8080/api/", TomlSpecWriter.FromAContainer("http://127.0.0.1:8080/api/"));
+        Assert.Equal("https://shop.example.com", TomlSpecWriter.FromAContainer("https://shop.example.com"));
+        Assert.DoesNotContain("docker_network", TomlSpecWriter.Write(spec, dockerDesktop: false));
         var check = await Fixtures.PythonCheckAsync(toml);
         Assert.True(check is null || check.Ok, check?.Error);
     }
@@ -173,6 +193,15 @@ public class LoadTests
         Assert.Contains("Feature 'browse' needs 'cache', which isn't a service or infrastructure.", problems);
         Assert.Contains("Feature 'empty': pick the components it needs.", problems);
         Assert.Contains("Give at least one number of users, each between 1 and 100000.", problems);
+        // durations the analyzer can read back: hours, minutes, seconds, in that order
+        foreach (var odd in new[] { "500ms", "30s1m", "2" })
+        {
+            Assert.Contains((spec with { Load = spec.Load! with { Duration = odd } }).Problems(),
+                p => p.Contains("isn't a duration", StringComparison.Ordinal));
+        }
+
+        Assert.DoesNotContain((spec with { Load = spec.Load! with { Users = [5], Duration = "1h30m" } }).Problems(),
+            p => p.Contains("isn't a duration", StringComparison.Ordinal));
         Assert.Contains(problems, p => p.StartsWith("'two minutes' isn't a duration", StringComparison.Ordinal));
     }
 

@@ -1,5 +1,6 @@
 import { Alert, Button, Group, NumberInput, Paper, SegmentedControl, Stack, TagsInput, Text, Title } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
+import { useState } from 'react';
 import type { WizardState } from '../model';
 import { estimatedMinutes, loadProblems, type LoadSettings } from '../routes';
 
@@ -25,6 +26,7 @@ export function parseUsers(values: string[]): number[] {
 
 export function UsersStep({ state, setState }: Props) {
   const load = state.load;
+  const [leftOut, setLeftOut] = useState<string[]>([]);
   const set = (patch: Partial<LoadSettings>) => setState((s) => ({ ...s, load: { ...s.load, ...patch } }));
   const problems = loadProblems(load);
   const sweep = load.users.length > 1;
@@ -45,11 +47,20 @@ export function UsersStep({ state, setState }: Props) {
         <TagsInput
           aria-label="numbers of users"
           value={load.users.map(String)}
-          onChange={(values) => set({ users: parseUsers(values) })}
+          onChange={(values) => {
+            const users = parseUsers(values);
+            setLeftOut(values.filter((v) => !users.includes(Number(v.trim()))));
+            set({ users });
+          }}
           splitChars={[',', ' ']}
           placeholder="Type a number, then Enter"
           clearable
         />
+        {leftOut.length > 0 && (
+          <Text size="sm" c="orange" mt={4}>
+            Left out {leftOut.map((v) => `“${v}”`).join(', ')}: each level is a whole number of users, 1 or more.
+          </Text>
+        )}
         <Group gap="xs" mt="xs">
           <Text size="sm" c="dimmed">
             Start from:

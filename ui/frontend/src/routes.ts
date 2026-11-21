@@ -99,7 +99,8 @@ export const initialLoad: LoadSettings = {
 const HEALTH = /\/(health|healthz|healthcheck|ready|readiness|readyz|live|liveness|livez|ping|metrics|status|version)\/?$/i;
 const LOGIN = /(log-?in|sign-?in|token|authenticate|auth)\/?$/i;
 const FEATURE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-const DURATION = /^(\d+(ms|s|m|h))+$/;
+// what the analyzer reads back (validity.duration_seconds): hours, minutes, seconds, in that order
+const DURATION = /^(?=\d)(\d+h)?(\d+m)?(\d+s)?$/;
 
 export const isModelled = (c: DraftComponent) => c.kind === 'service' || c.kind === 'infrastructure';
 
@@ -402,7 +403,9 @@ export function loadProblems(load: LoadSettings): string[] {
   if (load.users.some((u) => !Number.isInteger(u) || u < 1 || u > 100000)) {
     problems.push('Each number of users is a whole number from 1 to 100000.');
   }
-  if (!DURATION.test(load.duration)) problems.push('Write how long each level lasts like 2m, 90s or 1m30s.');
+  if (!DURATION.test(load.duration)) {
+    problems.push('Write how long each level lasts like 2m, 90s or 1h30m: hours, minutes, seconds, in that order.');
+  }
   if (!(load.thinkTime >= 0)) problems.push("The pause can't be negative.");
   return problems;
 }

@@ -94,4 +94,30 @@ public sealed class SpecWritingTests : IDisposable
         Assert.Equal("one", File.ReadAllText(second.Backup!));
         Assert.Throws<ArgumentException>(() => SpecStore.Resolve(_dir, "../escape.toml"));
     }
+
+    [Fact]
+    public void A_relative_folder_is_refused_and_a_backup_is_never_overwritten()
+    {
+        // relative to the app's own folder would be a surprise
+        Assert.Throws<ArgumentException>(() => SpecStore.Resolve("perf", "shop"));
+
+        var dir = Directory.CreateTempSubdirectory("save-");
+        try
+        {
+            var path = Path.Combine(dir.FullName, "shop.toml");
+            File.WriteAllText(path, "one");
+            var at = new DateTime(2026, 11, 21, 10, 0, 0);   // two saves in the same second
+
+            var first = SpecStore.WriteKeepingOld(path, "two", at);
+            var second = SpecStore.WriteKeepingOld(path, "three", at);
+
+            Assert.NotEqual(first, second);
+            Assert.Equal("one", File.ReadAllText(first!));
+            Assert.Equal("two", File.ReadAllText(second!));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
 }

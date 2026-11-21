@@ -13,8 +13,14 @@ public static class TomlSpecWriter
 {
     private static readonly Regex BareKey = new(@"^[A-Za-z0-9_-]+$");
 
-    public static string Write(SpecDocument spec, DateTime? writtenAt = null)
+    /// <param name="dockerDesktop">
+    /// Docker runs in a VM (Docker Desktop on Windows and macOS): k6's container
+    /// can't share this machine's network, so it reaches the app through
+    /// host.docker.internal instead of localhost. The default is this machine's.
+    /// </param>
+    public static string Write(SpecDocument spec, DateTime? writtenAt = null, bool? dockerDesktop = null)
     {
+        var inVm = dockerDesktop ?? !OperatingSystem.IsLinux();
         var date = (writtenAt ?? DateTime.Now).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var rule = "# " + new string('=', 77);
         var sb = new StringBuilder();
@@ -117,7 +123,16 @@ public static class TomlSpecWriter
                     ? $"vus = {load.Users[0]}"
                     : $"vus = [{string.Join(", ", load.Users)}]")
                 .AppendLine($"duration = {Str(load.Duration)}");
-            if (load.Env is { Count: > 0 } env)
+            var env = load.Env;
+            if (inVm)
+            {
+                sb.AppendLine("# Docker Desktop: k6 can't use this machine's network, so it runs on Docker's")
+                    .AppendLine("# own and reaches the app at host.docker.internal.")
+                    .AppendLine("docker_network = \"bridge\"");
+                env = env?.ToDictionary(e => e.Key, e => e.Key == "BASE_URL" ? FromAContainer(e.Value) : e.Value);
+            }
+
+            if (env is { Count: > 0 })
             {
                 sb.AppendLine($"env = {{ {string.Join(", ", env.Select(e => $"{Key(e.Key)} = {Str(e.Value)}"))} }}");
             }
@@ -133,6 +148,20 @@ public static class TomlSpecWriter
     }
 
     public static string Key(string key) => BareKey.IsMatch(key) ? key : Str(key);
+
+    /// <summary>The address as a container sees it on Docker Desktop: this machine is host.docker.internal.</summary>
+    public static string FromAContainer(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || uri.Host is not ("localhost" or "127.0.0.1" or "[::1]" or "::1"))
+        {
+            return url;
+        }
+
+        var outside = new UriBuilder(uri) { Host = "host.docker.internal" }.Uri.ToString();
+        // UriBuilder adds a slash to a bare address; keep the user's form
+        return url.EndsWith('/') ? outside : outside.TrimEnd('/');
+    }
 
     /// <summary>A TOML basic string.</summary>
     public static string Str(string value)

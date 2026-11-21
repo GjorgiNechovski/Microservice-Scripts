@@ -80,11 +80,17 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    trusted. Pick one of its routes, add it to a feature, or leave it out of the
    analysis with one click.
 6. **Users.** How many virtual users to hold, one level after another (several
-   make a sweep), for how long, and the pause between a user's requests.
+   make a sweep), for how long (hours, minutes, seconds, in that order, as the
+   analyzer reads it back), and the pause between a user's requests.
 7. **Save.** The spec and the load script (`load.js`) are previewed, the spec is
    checked by the analyzer itself (`python3 -m analyzer.spec --json`), and both
-   are written to your project's `perf/` folder by default. Saving over an
-   existing file keeps the old one as a dated `.bak` file.
+   are written to your project's `perf/` folder by default (a whole path: a
+   relative one is refused). Saving over an existing file keeps the old one as a
+   dated `.bak` file, never over an earlier backup. While a run is going, its
+   folder can't be saved into: a sweep reads its load script again at every
+   level. On Windows and macOS (Docker Desktop) the spec runs k6 on Docker's own
+   network and sends it to `host.docker.internal`, since k6's container can't
+   use this machine's network there.
 8. **Run.** Your app's status again, and the **monitoring stack** the
    measurements come from (Prometheus, the OpenTelemetry collector, cAdvisor in
    `observability/`). If it isn't running, its settings are filled in from what

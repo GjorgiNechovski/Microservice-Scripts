@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { ApiError, api } from '../api';
 import { FolderPicker } from '../components/FolderPicker';
 import { toScript, toSpecDocument, type WizardState } from '../model';
+import { secretVariable, usesSecret } from '../routes';
 import type { SaveResult } from '../types';
 
 type Props = {
@@ -120,9 +121,7 @@ export function SaveStep({ state, setState }: Props) {
               The file it replaced is kept as {b}.
             </Text>
           ))}
-          <Text size="sm" mt="sm">
-            Also usable from the command line: <Code>python3 -m analyzer {saved.path} --skip-chaos</Code>
-          </Text>
+          <CommandLine path={saved.path} secret={state.load.script === 'generate' && usesSecret(state.auth) ? secretVariable(state.auth) : null} />
         </Alert>
       )}
 
@@ -158,5 +157,25 @@ export function SaveStep({ state, setState }: Props) {
         A folder that doesn't exist yet is created when you save.
       </Text>
     </Stack>
+  );
+}
+
+/** The same run from a terminal: from the analyzer's folder, results next to the spec, the secret set. */
+function CommandLine({ path, secret }: { path: string; secret: string | null }) {
+  const folder = path.replace(/[\\/][^\\/]*$/, '');
+  const separator = path.includes('\\') ? '\\' : '/';
+  return (
+    <>
+      <Text size="sm" mt="sm">
+        Also usable from a terminal, in the Microservice-Scripts folder:
+      </Text>
+      <Code block>
+        {`${secret ? `${secret}=… ` : ''}python3 -m analyzer ${path} --out ${folder}${separator}analysis`}
+      </Code>
+      <Text size="xs" c="dimmed">
+        That is the full run; add --skip-chaos for the load test only.
+        {secret ? ` ${secret} is the secret the load test logs in with (never written to a file).` : ''}
+      </Text>
+    </>
   );
 }

@@ -25,7 +25,14 @@ public static class SpecStore
             name += extension;
         }
 
-        return Path.Combine(Path.GetFullPath(FolderBrowser.ExpandHome(directory.Trim())), name);
+        // relative to what? The app's own folder would be a surprise: ask for the whole path
+        var folder = FolderBrowser.ExpandHome(directory.Trim());
+        if (!Path.IsPathFullyQualified(folder))
+        {
+            throw new ArgumentException($"Give the whole path of the folder to save in, not '{directory}'.");
+        }
+
+        return Path.Combine(Path.GetFullPath(folder), name);
     }
 
     public static SaveResult Write(string path, string toml, DateTime? now = null) =>
@@ -38,8 +45,15 @@ public static class SpecStore
         string? backup = null;
         if (File.Exists(path))
         {
-            backup = $"{path}.{(now ?? DateTime.Now):yyyyMMdd-HHmmss}.bak";
-            File.Copy(path, backup, overwrite: true);
+            // never over an earlier backup: two saves in one second would lose the original
+            var stamp = $"{path}.{(now ?? DateTime.Now):yyyyMMdd-HHmmss}";
+            backup = $"{stamp}.bak";
+            for (var n = 2; File.Exists(backup); n++)
+            {
+                backup = $"{stamp}-{n}.bak";
+            }
+
+            File.Copy(path, backup, overwrite: false);
         }
 
         File.WriteAllText(path, text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
