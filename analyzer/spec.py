@@ -415,6 +415,20 @@ def analyze(spec: dict, measurements: dict) -> dict:
     }
 
 
+def _load_problem(spec: dict, spec_path: str) -> str | None:
+    """Why its ``[load]`` can't run as written (a missing script, say), or None.
+
+    Kept apart from ``ok``: a spec is still valid while its script is being
+    written next to it.
+    """
+    from analyzer.collect.loadgen import load_config
+    try:
+        load_config(spec, spec_path)
+    except (ValueError, OSError) as exc:     # FileNotFoundError is an OSError
+        return str(exc)
+    return None
+
+
 def main(argv=None) -> int:
     """Check a spec without running anything: ``python3 -m analyzer.spec <spec>``.
 
@@ -440,12 +454,15 @@ def main(argv=None) -> int:
         spec = load_system(args.spec)
     except (OSError, ValueError) as exc:     # TOMLDecodeError is a ValueError
         verdict = {"ok": False, "error": str(exc)}
+    except Exception as exc:                 # parses, but the wrong shape
+        verdict = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     else:
         verdict = {"ok": True, "name": spec.get("name"),
                    "compose_projects": compose_projects(spec),
                    "services": len(spec["services"]),
                    "infrastructure": len(spec.get("infrastructure", [])),
-                   "operations": len(spec.get("operations", {}))}
+                   "operations": len(spec.get("operations", {})),
+                   "load_error": _load_problem(spec, args.spec)}
     if args.json:
         print(json.dumps(verdict))
     elif verdict["ok"]:

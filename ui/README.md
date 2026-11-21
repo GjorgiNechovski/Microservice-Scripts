@@ -86,7 +86,9 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    unless you want traces in Honeycomb, any extra scrape jobs. They are shown
    as the `observability/.env` they make (the old one kept as a `.bak`), and
    **Save and start** starts it; once up, every scrape target is shown up or
-   down. Then a check of what the run needs, which only reads, and **Start**.
+   down. Then a check of what the run needs, which only reads (it also catches
+   a load script that isn't there, and request metrics without response
+   times), and **Start**.
    **The full run** is the default and the recommended one: the load test,
    fault injection, and all four analysis layers. Because fault injection
    stops your app's containers for a moment, Start shows the analyzer's own

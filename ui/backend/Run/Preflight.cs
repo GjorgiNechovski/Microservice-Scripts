@@ -47,6 +47,10 @@ public sealed class Preflight(IProcessRunner runner, PythonLocator python, RepoL
                 checks.Add(new("spec", "The spec", "ok",
                     $"{specPath}: {root.GetProperty("services").GetInt32()} services, "
                     + $"{root.GetProperty("operations").GetInt32()} features."));
+                if (root.TryGetProperty("load_error", out var load) && load.ValueKind == JsonValueKind.String)
+                {
+                    checks.Add(new("load", "The load test", "fail", load.GetString()!));
+                }
             }
             else
             {
@@ -141,6 +145,13 @@ public sealed class Preflight(IProcessRunner runner, PythonLocator python, RepoL
             }
             else
             {
+                if (d.TryGetProperty("latency_metric", out var latency) && latency.ValueKind == JsonValueKind.Null)
+                {
+                    checks.Add(new("latency", "Response times", "warn",
+                        $"Prometheus counts requests ({request.GetString()}) but has no response-time metric: arrival "
+                        + "rates will be measured, the services' speed (their service rates) won't."));
+                }
+
                 var seen = d.GetProperty("traffic_services").EnumerateArray().Select(s => s.GetString()).ToList();
                 checks.Add(new("metrics", "Request metrics", "ok",
                     $"{request.GetString()}, by {d.GetProperty("service_label").GetString()}"

@@ -253,10 +253,17 @@ def test_check_command_reports_valid_and_invalid_specs():
 
     rc, v = check('name = "x"\ncompose_project = ["a", "b"]\nservices = ["s"]\n')
     assert rc == 0 and v["ok"] and v["compose_projects"] == ["a", "b"]
+    assert v["load_error"] is None
+    # a load section whose script isn't there: still a valid spec, with the problem said
+    rc, v = check('name = "x"\nservices = ["s"]\n[load]\nscript = "gone.js"\nvus = 5\n')
+    assert rc == 0 and v["ok"] and "gone.js" in v["load_error"]
     rc, v = check('name = "x"\nservices = []\n')
     assert rc == 1 and not v["ok"] and "services" in v["error"]
     rc, v = check('name = "x\n')                          # broken TOML
     assert rc == 1 and not v["ok"]
+    # valid TOML of the wrong shape: still a verdict, not a traceback
+    rc, v = check('name = "x"\nservices = ["s"]\noperations = [1, 2]\n')
+    assert rc == 1 and not v["ok"] and v["error"].startswith("AttributeError")
 
 
 def _run_all() -> int:
