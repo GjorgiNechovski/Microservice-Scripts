@@ -153,7 +153,16 @@ needed. What it can't place is marked *unsure* rather than guessed.
 Routes are found the same way, as data: the patterns in
 [`backend/Data/route-patterns.json`](backend/Data/route-patterns.json) (see
 [What it can read](#what-it-can-read)); add a framework there. Tests,
-dependencies and build output aren't searched. How a route is reached from
+dependencies and build output aren't searched. A route's path includes every
+prefix put in front of it: its controller's, its router's (a group inside a
+group too), and where that router is mounted, in the same file or another one
+(`app.use('/api', require('./routes'))`, `app.include_router(books.router,
+prefix="/books")`, `path('api/', include('books.urls'))`): imports are followed
+to the file the router is declared in, and a prefix kept in a constant
+(`prefix=settings.API_V1_STR`) is looked up. Prefixes set for the whole app
+outside the routes (NestJS `setGlobalPrefix`, Spring's `context-path`,
+Laravel's automatic `/api` for `routes/api.php`) aren't read: correct those
+paths on the Routes step. How a route is reached from
 outside is read from the gateways' own configuration: nginx and openresty files
 the compose file mounts or builds in (`location`, `proxy_pass`, `upstream`,
 `set` variables), Kong's declarative configuration (`strip_path`, service paths,
@@ -178,26 +187,26 @@ that only the first request will succeed.
 
 Keep this table current: it is what the app supports, per language. Change it
 with `backend/Data/route-patterns.json`, `backend/Data/request-types.json`,
-`backend/Routes/TypeIndex.cs`, `backend/Routes/RequestShapes.cs` or
-`backend/Drafting/PortGuesser.cs`.
+`backend/Routes/RouteMounts.cs`, `backend/Routes/TypeIndex.cs`,
+`backend/Routes/RequestShapes.cs` or `backend/Drafting/PortGuesser.cs`.
 
-| Language | Routes | Example bodies from | Runtime (from the image) |
-|----------|--------|---------------------|--------------------------|
-| Python | FastAPI, Flask, Sanic, aiohttp, Litestar, Quart, Django (`urls.py`, DRF routers), Falcon | Pydantic models, dataclasses, TypedDict, enums (`Field(alias=…)`) | yes |
-| C# | ASP.NET Core controllers and minimal APIs, FastEndpoints | classes, records, enums (`[JsonPropertyName]`, `[BsonId]`, `[BsonRepresentation]`, `[JsonIgnore]`); camelCase like ASP.NET | yes, with the .NET version's default port |
-| Java | Spring, JAX-RS (Quarkus, Jersey), Micronaut | classes, records, enums (`@JsonProperty`, `@Id`, `@JsonIgnore`) | yes |
-| Kotlin | Spring, Micronaut, Ktor | data classes, enum classes | from the code |
-| TypeScript, JavaScript | Express, Fastify, Koa, Hono, Elysia, hapi, NestJS | TypeScript classes, interfaces, enums (NestJS `@Body`, `@Param`, `@Query`) | Node.js, Deno (8000), Bun (3000) |
-| Go | net/http (incl. Go 1.22 `"GET /x"`), gin, echo, chi, fiber, gorilla/mux | structs with `json` tags, read where the handler binds them (`ShouldBindJSON`, `Bind`, `Decode`) | yes, else from the code |
-| Rust | Actix Web, Rocket, Axum | serde structs (`rename`, `rename_all`, `skip`, `default`) through `Json`, `Path`, `Query` | yes, else from the code |
-| Ruby | Rails `routes.rb` (incl. `resources`), Sinatra, Grape | no | yes |
-| PHP | Laravel and Lumen (incl. `apiResource`), Slim, Symfony | no | yes, PHP-FPM 9000, Apache 80 |
-| Elixir | Phoenix router (incl. `resources`) | no | yes |
-| Scala, Java | Play (`conf/routes`) | no | Scala (sbt) |
-| Swift | Vapor | no | yes |
-| Dart | shelf_router, dart_frog | no | yes |
-| C++ | Crow, Drogon, cpp-httplib, Pistache, Oat++ | no | gcc, clang |
-| Clojure, Groovy | Compojure; Micronaut | no | Clojure |
+| Language | Routes | Prefixes from | Example bodies from | Runtime (from the image) |
+|----------|--------|---------------|---------------------|--------------------------|
+| Python | FastAPI, Flask, Sanic, aiohttp, Litestar, Quart, Django (`urls.py`, DRF routers), Falcon | `APIRouter(prefix=)`, `Blueprint(url_prefix=)`, `include_router`, `register_blueprint` (its `url_prefix` replaces the blueprint's), `mount`, Django `include`; across files | Pydantic models, dataclasses, TypedDict, enums (`Field(alias=…)`) | yes |
+| C# | ASP.NET Core controllers and minimal APIs, FastEndpoints | `[Route]` on a controller, `MapGroup` (also inside another), endpoint extension methods called on a group | classes, records, enums (`[JsonPropertyName]`, `[BsonId]`, `[BsonRepresentation]`, `[JsonIgnore]`); camelCase like ASP.NET | yes, with the .NET version's default port |
+| Java | Spring, JAX-RS (Quarkus, Jersey), Micronaut | `@RequestMapping`, `@Path`, `@Controller` on the class | classes, records, enums (`@JsonProperty`, `@Id`, `@JsonIgnore`) | yes |
+| Kotlin | Spring, Micronaut, Ktor | as Java; Ktor `route("/x") { }` | data classes, enum classes | from the code |
+| TypeScript, JavaScript | Express, Fastify, Koa, Hono, Elysia, hapi, NestJS | `app.use('/x', router)`, Hono `route` and `basePath`, Fastify `register(…, { prefix })`, Elysia `prefix`, NestJS `@Controller`; across files (`require`, `import`) | TypeScript classes, interfaces, enums (NestJS `@Body`, `@Param`, `@Query`) | Node.js, Deno (8000), Bun (3000) |
+| Go | net/http (incl. Go 1.22 `"GET /x"`), gin, echo, chi, fiber, gorilla/mux | `Group` (also inside another), `PathPrefix().Subrouter()`, a function called with a group, chi `Route` and `Mount` | structs with `json` tags, read where the handler binds them (`ShouldBindJSON`, `Bind`, `Decode`) | yes, else from the code |
+| Rust | Actix Web, Rocket, Axum | Axum `nest("/x", routes())` | serde structs (`rename`, `rename_all`, `skip`, `default`) through `Json`, `Path`, `Query` | yes, else from the code |
+| Ruby | Rails `routes.rb` (incl. `resources`), Sinatra, Grape | `namespace`, `scope` | no | yes |
+| PHP | Laravel and Lumen (incl. `apiResource`), Slim, Symfony | `Route::prefix()->group`, `Route::group(['prefix' => …])`, Symfony `#[Route]` on the class | no | yes, PHP-FPM 9000, Apache 80 |
+| Elixir | Phoenix router (incl. `resources`) | `scope` | no | yes |
+| Scala, Java | Play (`conf/routes`) | no | no | Scala (sbt) |
+| Swift | Vapor | no | no | yes |
+| Dart | shelf_router, dart_frog | no | no | yes |
+| C++ | Crow, Drogon, cpp-httplib, Pistache, Oat++ | no | no | gcc, clang |
+| Clojure, Groovy | Compojure; Micronaut | Micronaut `@Controller` | no | Clojure |
 
 A service in any other language (Haskell, Zig, Nim, OCaml, Crystal, Perl,
 Erlang and more, recognised by their file extensions) is named on the Routes

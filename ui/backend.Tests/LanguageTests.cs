@@ -43,7 +43,8 @@ public sealed class LanguageTests : IDisposable
         "<?php\n#[Route('/api/books')]\nclass BookController {\n  #[Route('/{id}', methods: ['GET'])]\n  public function show(int $id) {}\n}",
         "GET /api/books/{id} show")]
     [InlineData("lib/shop_web/router.ex", "scope \"/api\", ShopWeb do\n  get \"/books/:id\", BookController, :show\n  resources \"/orders\", OrderController\nend",
-        "DELETE /orders/{id} -|GET /books/{id} show|GET /orders -|GET /orders/{id} -|PATCH /orders/{id} -|POST /orders -|PUT /orders/{id} -")]
+        // the scope's "/api" comes first
+        "DELETE /api/orders/{id} -|GET /api/books/{id} show|GET /api/orders -|GET /api/orders/{id} -|PATCH /api/orders/{id} -|POST /api/orders -|PUT /api/orders/{id} -")]
     [InlineData("conf/routes", "GET     /books/:id      controllers.Books.show(id: Long)\nPOST    /books          controllers.Books.create()",
         "GET /books/{id} -|POST /books -")]
     [InlineData("Sources/App/routes.swift", "app.get(\"books\", \":id\") { req in }\napp.post(\"books\") { req in }",

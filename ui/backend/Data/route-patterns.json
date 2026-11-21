@@ -8,13 +8,27 @@
     "  args    an argument list to read the path, methods and handlers from",
     "Prefix patterns add a prefix: scope 'following' to every route after it in the same file (a controller",
     "class), scope 'object' to the routes declared on the same router variable. A 'controller' group replaces",
-    "[controller] in the prefix (ASP.NET). 'handler' is matched just after a route to name it after its function.",
-    "rootedIgnoresPrefix: a route path starting with / ignores the prefix. noPrefix: never prefixed.",
+    "[controller] in the prefix (ASP.NET). An object pattern without a prefix declares a router variable; a 'parent'",
+    "group is the router it was made from (a group inside a group), whose prefix comes first. Instead of a literal",
+    "prefix, prefixFromArgs may capture a 'constant': a name whose string value is looked up in the service's code.",
+    "'handler' is matched just after a route to name it after its function.",
+    "rootedIgnoresPrefix: a route path starting with / ignores the prefix. noPrefix: never prefixed by a 'following' prefix.",
+    "routeObjects: when set, a route counts only on a variable it matches or one a prefix pattern declares.",
+    "Mount patterns put routers under a prefix, also across files. Groups: 'object' the router mounted onto,",
+    "'prefix' (or prefixFromArgs on 'args'), and what is mounted: 'target' a router variable, module (imports are",
+    "followed) or require(...); targetIsLastArg: the target is the last argument in 'args'; 'function' a function",
+    "whose body declares routes on its first parameter (or on anything, when it has none); block 'braces' or",
+    "'do-end': the routes inside the block that follows. replacesOwnPrefix: the router's own prefix is dropped (Flask).",
     "crud: the path is a REST resource; it stands for list, create, read, replace, update and delete routes.",
     "handlersFromArgs: one route per match in 'args', each with its own method and handler (Axum, Actix).",
     "inlineHandler: where an inline handler's parameter list starts, right after the route (a lambda, func(...) {...}).",
     "files: only files whose name matches. functionDefs: how a handler named elsewhere is found, per extension.",
-    "languages: file extensions by language, to say which language a service is written in."
+    "languages: file extensions by language, to say which language a service is written in.",
+    "imports, exports, modules, firstParam (keys may list several extensions): how a mount's target is followed to",
+    "the file it is declared in. An import gives 'module' with 'name' (the module or its default export) or 'names'",
+    "(a list, 'a as b' / 'a: b' renaming). An export names a file's default 'object'. modules: how a module is found,",
+    "'python' (dotted, relative with leading dots) or 'node' (a relative path, extension and index file optional).",
+    "firstParam: the name in a function's first parameter, for function mounts."
   ],
   "skipFolders": [
     "node_modules", "bin", "obj", ".git", "venv", ".venv", "env", "__pycache__", "dist", "build", "target",
@@ -47,6 +61,34 @@
     ".dart": "\\b{name}\\s*\\(",
     ".ex": "\\bdef\\s+{name}\\s*\\("
   },
+  "imports": {
+    ".py": [
+      "^[ \\t]*from[ \\t]+(?<module>\\.*[\\w.]*)[ \\t]+import[ \\t]+(?<names>\\([^)]*\\)|[^\\n#]+)",
+      "^[ \\t]*import[ \\t]+(?<module>[\\w.]+)[ \\t]+as[ \\t]+(?<name>\\w+)"
+    ],
+    ".js .mjs .cjs .ts .jsx .tsx": [
+      "\\b(?:const|let|var)\\s+(?<name>[A-Za-z_$][\\w$]*)\\s*=\\s*require\\(\\s*['\"](?<module>[^'\"]+)['\"]\\s*\\)",
+      "\\b(?:const|let|var)\\s*\\{(?<names>[^}]*)\\}\\s*=\\s*require\\(\\s*['\"](?<module>[^'\"]+)['\"]\\s*\\)",
+      "^[ \\t]*import\\s+(?:type\\s+)?(?<name>[A-Za-z_$][\\w$]*)\\s*(?:,\\s*\\{(?<names>[^}]*)\\})?\\s*from\\s*['\"](?<module>[^'\"]+)['\"]",
+      "^[ \\t]*import\\s*\\{(?<names>[^}]*)\\}\\s*from\\s*['\"](?<module>[^'\"]+)['\"]",
+      "^[ \\t]*import\\s*\\*\\s*as\\s+(?<name>[A-Za-z_$][\\w$]*)\\s+from\\s*['\"](?<module>[^'\"]+)['\"]"
+    ]
+  },
+  "exports": {
+    ".js .mjs .cjs .ts .jsx .tsx": [
+      "^[ \\t]*module\\.exports\\s*=\\s*(?<object>[A-Za-z_$][\\w$]*)\\s*;?[ \\t]*$",
+      "^[ \\t]*export\\s+default\\s+(?<object>[A-Za-z_$][\\w$]*)\\s*;?[ \\t]*$"
+    ]
+  },
+  "modules": {
+    ".py": "python",
+    ".js .mjs .cjs .ts .jsx .tsx": "node"
+  },
+  "firstParam": {
+    ".go": "^\\s*(?<name>\\w+)",
+    ".rs": "^\\s*(?:mut\\s+)?(?<name>\\w+)",
+    ".cs": "(?<name>\\w+)\\s*(?:=[^,]*)?$"
+  },
   "frameworks": [
     {
       "name": "FastAPI / Flask / Sanic / aiohttp",
@@ -58,9 +100,21 @@
       "prefixes": [
         {
           "regex": "(?<object>\\w+)\\s*=\\s*(?:APIRouter|Blueprint)\\((?<args>[^)]*)\\)",
-          "prefixFromArgs": "(?:prefix|url_prefix)\\s*=\\s*[\"'](?<prefix>[^\"']*)[\"']",
+          "prefixFromArgs": "(?:prefix|url_prefix)\\s*=\\s*(?:[rbuf]?[\"'](?<prefix>[^\"']*)[\"']|(?<constant>[\\w.]+))",
           "scope": "object"
         }
+      ],
+      "mounts": [
+        {
+          "regex": "\\b(?<object>\\w+)\\.include_router\\(\\s*(?:router\\s*=\\s*)?(?<target>[\\w.]+)(?<args>(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*)\\)",
+          "prefixFromArgs": "\\bprefix\\s*=\\s*(?:[rbuf]?[\"'](?<prefix>[^\"']*)[\"']|(?<constant>[\\w.]+))"
+        },
+        {
+          "regex": "\\b(?<object>\\w+)\\.register_blueprint\\(\\s*(?:blueprint\\s*=\\s*)?(?<target>[\\w.]+)(?<args>(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*)\\)",
+          "prefixFromArgs": "\\burl_prefix\\s*=\\s*(?:[rbuf]?[\"'](?<prefix>[^\"']*)[\"']|(?<constant>[\\w.]+))",
+          "replacesOwnPrefix": true
+        },
+        { "regex": "\\b(?<object>\\w+)\\.mount\\(\\s*(?:path\\s*=\\s*)?[rbuf]?[\"'](?<prefix>[^\"']*)[\"']\\s*,\\s*(?:app\\s*=\\s*)?(?<target>[\\w.]+)\\s*[,)]" }
       ],
       "handler": "\\A[^\\n]*\\n(?:[ \\t]*@[^\\n]*\\n)*[ \\t]*(?:async\\s+)?def\\s+(?<name>\\w+)"
     },
@@ -77,8 +131,11 @@
       "extensions": [".py"],
       "files": "(?i)urls\\.py$",
       "routes": [
-        { "regex": "\\b(?:re_)?path\\(\\s*r?[\"'](?<path>[^\"']*)[\"']\\s*,\\s*(?:[\\w.]+\\.as_view\\(\\)|(?<handler>[\\w.]+))", "defaultMethod": "GET" },
-        { "regex": "\\.register\\(\\s*r?[\"'](?<path>[^\"']+)[\"']", "crud": true }
+        { "regex": "\\b(?:re_)?path\\(\\s*r?[\"'](?<path>[^\"']*)[\"']\\s*,\\s*(?:[\\w.]+\\.as_view\\(\\)|(?!include\\b)(?<handler>[\\w.]+))", "defaultMethod": "GET" },
+        { "regex": "\\b(?<object>\\w+)\\.register\\(\\s*r?[\"'](?<path>[^\"']+)[\"']", "crud": true }
+      ],
+      "mounts": [
+        { "regex": "\\b(?:re_)?path\\(\\s*r?[\"'](?<prefix>[^\"']*)[\"']\\s*,\\s*include\\(\\s*\\(?\\s*(?<target>[\"'][\\w.]+[\"']|[\\w.]+)" }
       ]
     },
     {
@@ -96,13 +153,18 @@
           "regex": "\\[Http(?<method>Get|Post|Put|Delete|Patch)(?:\\(\\s*(?:template:\\s*)?\"(?<path>[^\"]*)\"[^)]*\\))?\\]",
           "rootedIgnoresPrefix": true
         },
-        { "regex": "\\.Map(?<method>Get|Post|Put|Delete|Patch)\\(\\s*(?:pattern:\\s*)?\"(?<path>[^\"]*)\"", "noPrefix": true }
+        { "regex": "(?:\\b(?<object>\\w+))?\\.Map(?<method>Get|Post|Put|Delete|Patch)\\(\\s*(?:pattern:\\s*)?\"(?<path>[^\"]*)\"", "noPrefix": true }
       ],
       "prefixes": [
         {
           "regex": "\\[Route\\(\\s*(?:template:\\s*)?\"(?<prefix>[^\"]*)\"\\s*\\)\\]\\s*(?:\\[[^\\]]*\\]\\s*)*(?:(?:public|internal|sealed|partial|abstract|static)\\s+)*class\\s+(?<controller>\\w+)",
           "scope": "following"
-        }
+        },
+        { "regex": "(?<object>\\w+)\\s*=\\s*(?<parent>\\w+)\\.MapGroup\\(\\s*(?:prefix:\\s*)?\"(?<prefix>[^\"]*)\"", "scope": "object" }
+      ],
+      "mounts": [
+        { "regex": "\\b(?<object>\\w+)\\.MapGroup\\(\\s*(?:prefix:\\s*)?\"(?<prefix>[^\"]*)\"\\s*\\)(?:\\s*\\.(?!Map)\\w+\\((?:[^()]|\\([^()]*\\))*\\))*\\s*\\.(?<function>Map\\w+)\\(\\s*\\)" },
+        { "regex": "\\b(?<object>\\w+)\\.(?<function>Map\\w+)\\(\\s*\\)" }
       ],
       "handler": "\\A[^\\n]*\\n(?:[ \\t]*\\[[^\\n]*\\][ \\t]*\\n)*[ \\t]*(?:(?:public|private|protected|internal|static|async|virtual|override)\\s+)+[^(=;{]*?\\b(?<name>\\w+)\\s*(?:<[^>]*>)?\\(",
       "inlineHandler": "\\A\\s*,\\s*(?:static\\s+)?(?:async\\s+)?(?=\\()"
@@ -161,18 +223,45 @@
       "extensions": [".kt"],
       "routes": [
         { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\(\\s*\"(?<path>[^\"]*)\"\\s*\\)\\s*\\{" }
+      ],
+      "mounts": [
+        { "regex": "^\\s*route\\(\\s*\"(?<prefix>[^\"]*)\"\\s*\\)\\s*\\{", "block": "braces" }
       ]
     },
     {
       "name": "Express / Fastify / Koa / Hono / Elysia",
       "extensions": [".js", ".mjs", ".cjs", ".ts"],
       "routes": [
-        { "regex": "\\b(?<object>app|router|api|server|routes|fastify|hono|elysia|r)\\.(?<method>get|post|put|delete|patch)\\(\\s*['\"`](?<path>/[^'\"`]*)['\"`]" }
+        { "regex": "\\b(?<object>[A-Za-z_$][\\w$]*)\\.(?<method>get|post|put|delete|patch)\\(\\s*['\"`](?<path>/[^'\"`]*)['\"`]" }
       ],
+      "routeObjects": "^(?:app|router|api|server|routes|fastify|hono|elysia|r)$|(?:Router|Routes|router|routes)$",
       "prefixes": [
         {
           "regex": "(?<object>\\w+)\\s*=\\s*(?:express\\.Router|Router|new\\s+Hono|new\\s+Elysia)\\(\\s*(?:\\{\\s*prefix\\s*:\\s*)?['\"`](?<prefix>/[^'\"`]*)['\"`]",
           "scope": "object"
+        },
+        {
+          "regex": "(?<object>[A-Za-z_$][\\w$]*)\\s*=\\s*(?:express\\.Router|Router|express|new\\s+(?:Hono|Elysia|Router|Koa)|Fastify|fastify|require\\(\\s*['\"]express['\"]\\s*\\)\\.Router)\\s*\\(",
+          "scope": "object"
+        },
+        {
+          "regex": "(?<object>[A-Za-z_$][\\w$]*)\\s*=\\s*(?<parent>[A-Za-z_$][\\w$]*)\\.basePath\\(\\s*['\"`](?<prefix>/[^'\"`]*)['\"`]",
+          "scope": "object"
+        },
+        {
+          "regex": "(?<object>[A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+Hono\\([^)]*\\)\\s*\\.basePath\\(\\s*['\"`](?<prefix>/[^'\"`]*)['\"`]",
+          "scope": "object"
+        }
+      ],
+      "mounts": [
+        {
+          "regex": "\\b(?<object>[A-Za-z_$][\\w$]*)\\.use\\(\\s*['\"`](?<prefix>/[^'\"`]*)['\"`]\\s*,(?<args>(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*)\\)",
+          "targetIsLastArg": true
+        },
+        { "regex": "\\b(?<object>[A-Za-z_$][\\w$]*)\\.route\\(\\s*['\"`](?<prefix>/[^'\"`]*)['\"`]\\s*,\\s*(?<target>[A-Za-z_$][\\w$.]*)\\s*\\)" },
+        {
+          "regex": "\\b(?<object>[A-Za-z_$][\\w$]*)\\.register\\(\\s*(?<target>(?:require|import)\\(\\s*['\"][^'\"]+['\"]\\s*\\)|[A-Za-z_$][\\w$.]*)\\s*,\\s*\\{(?<args>[^}]*)\\}",
+          "prefixFromArgs": "\\bprefix\\s*:\\s*['\"`](?<prefix>/[^'\"`]*)['\"`]"
         }
       ],
       "handler": "\\A\\s*,\\s*(?:async\\s+)?(?:function\\s+)?(?<name>[A-Za-z_$][\\w$.]*)\\s*[,)]",
@@ -209,7 +298,13 @@
         }
       ],
       "prefixes": [
-        { "regex": "(?<object>\\w+)\\s*:?=\\s*\\w+\\.Group\\(\\s*\"(?<prefix>[^\"]*)\"", "scope": "object" }
+        { "regex": "(?<object>\\w+)\\s*:?=\\s*(?<parent>\\w+)\\.Group\\(\\s*\"(?<prefix>[^\"]*)\"", "scope": "object" },
+        { "regex": "(?<object>\\w+)\\s*:?=\\s*(?<parent>\\w+)\\.PathPrefix\\(\\s*\"(?<prefix>[^\"]*)\"\\s*\\)\\.Subrouter\\(", "scope": "object" }
+      ],
+      "mounts": [
+        { "regex": "^[ \\t]*(?:\\w+\\.)?(?<function>\\w+)\\(\\s*(?<object>\\w+)\\s*\\)[ \\t]*$" },
+        { "regex": "\\b(?<object>\\w+)\\.Mount\\(\\s*\"(?<prefix>[^\"]*)\"\\s*,\\s*(?:\\w+\\.)?(?<function>\\w+)\\(\\s*\\)\\s*\\)" },
+        { "regex": "\\b(?<object>\\w+)\\.Route\\(\\s*\"(?<prefix>[^\"]*)\"\\s*,\\s*func\\s*\\([^)]*\\)\\s*\\{", "block": "braces" }
       ],
       "handler": "\\A[^\\n]*?,\\s*(?:\\w+\\.)*(?<name>[A-Za-z_]\\w*)\\s*\\)",
       "inlineHandler": "\\A\\s*,\\s*func\\s*(?=\\()"
@@ -230,6 +325,9 @@
           "regex": "\\.route\\(\\s*\"(?<path>/[^\"]*)\"\\s*,(?<args>(?:[^;()]|\\((?:[^;()]|\\([^;()]*\\))*\\))*)\\)",
           "handlersFromArgs": "(?:web::)?(?<method>get|post|put|patch|delete)\\(\\s*\\)?\\s*(?:\\.to\\()?\\s*(?<name>[\\w:]+)\\s*\\)"
         }
+      ],
+      "mounts": [
+        { "regex": "\\.nest\\(\\s*\"(?<prefix>[^\"]*)\"\\s*,\\s*(?:\\w+::)*(?<function>\\w+)\\(\\s*\\)\\s*\\)" }
       ]
     },
     {
@@ -238,6 +336,10 @@
       "routes": [
         { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\s+['\"](?<path>[^'\"]+)['\"]" },
         { "regex": "^\\s*resources?\\s+:(?<path>\\w+)", "crud": true }
+      ],
+      "mounts": [
+        { "regex": "^[ \\t]*namespace\\s+(?::(?<prefix>\\w+)|['\"](?<prefix>[^'\"]*)['\"])[^\\n]*?\\bdo\\b", "block": "do-end" },
+        { "regex": "^[ \\t]*scope\\s+(?:path:\\s*)?['\"](?<prefix>[^'\"]*)['\"][^\\n]*?\\bdo\\b", "block": "do-end" }
       ],
       "handler": "\\A[^\\n]*?(?:to:\\s*['\"][\\w/]+#(?<name>\\w+)['\"])"
     },
@@ -248,6 +350,17 @@
         { "regex": "Route::(?<method>get|post|put|delete|patch)\\(\\s*['\"](?<path>[^'\"]*)['\"]" },
         { "regex": "Route::(?:api)?[Rr]esource\\(\\s*['\"](?<path>[^'\"]+)['\"]", "crud": true },
         { "regex": "\\$(?<object>app|router|group)->(?<method>get|post|put|delete|patch)\\(\\s*['\"](?<path>/[^'\"]*)['\"]" }
+      ],
+      "mounts": [
+        {
+          "regex": "Route::prefix\\(\\s*['\"](?<prefix>[^'\"]*)['\"]\\s*\\)(?:\\s*->\\s*\\w+\\((?:[^()]|\\([^()]*\\))*\\))*\\s*->\\s*group\\(\\s*function\\s*\\([^)]*\\)\\s*(?:use\\s*\\([^)]*\\)\\s*)?\\{",
+          "block": "braces"
+        },
+        {
+          "regex": "Route::group\\(\\s*\\[(?<args>[^\\]]*)\\]\\s*,\\s*function\\s*\\([^)]*\\)\\s*(?:use\\s*\\([^)]*\\)\\s*)?\\{",
+          "prefixFromArgs": "['\"]prefix['\"]\\s*=>\\s*['\"](?<prefix>[^'\"]*)['\"]",
+          "block": "braces"
+        }
       ]
     },
     {
@@ -269,6 +382,9 @@
       "routes": [
         { "regex": "^\\s*(?<method>get|post|put|patch|delete)\\s+\"(?<path>[^\"]*)\"\\s*,\\s*\\w+(?:\\.\\w+)*\\s*,\\s*:(?<handler>\\w+)" },
         { "regex": "^\\s*resources\\s+\"(?<path>[^\"]+)\"", "crud": true }
+      ],
+      "mounts": [
+        { "regex": "^[ \\t]*scope\\s+(?:path:\\s*)?\"(?<prefix>[^\"]*)\"[^\\n]*?\\bdo\\b(?!:)", "block": "do-end" }
       ]
     },
     {

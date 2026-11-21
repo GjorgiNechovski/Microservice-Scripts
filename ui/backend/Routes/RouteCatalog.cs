@@ -44,19 +44,22 @@ public sealed class RouteCatalog
     private readonly Regex? skipFiles;
     private readonly IReadOnlyDictionary<string, string> languages;
     private readonly IReadOnlyDictionary<string, string> functionDefs;
+    private readonly ModuleRules modules;
 
     private RouteCatalog(
         IReadOnlyList<Framework> frameworks,
         IEnumerable<string> skipFolders,
         string? skipFiles,
         IReadOnlyDictionary<string, string> languages,
-        IReadOnlyDictionary<string, string> functionDefs)
+        IReadOnlyDictionary<string, string> functionDefs,
+        ModuleRules modules)
     {
         this.frameworks = frameworks;
         this.skipFolders = new HashSet<string>(skipFolders, StringComparer.OrdinalIgnoreCase);
         this.skipFiles = skipFiles is null ? null : new Regex(skipFiles, RegexOptions.None, RegexTimeout);
         this.languages = languages;
         this.functionDefs = functionDefs;
+        this.modules = modules;
     }
 
     public IEnumerable<string> FrameworkNames => frameworks.Select(f => f.Name);
@@ -79,9 +82,31 @@ public sealed class RouteCatalog
         var skipFiles = root.TryGetProperty("skipFiles", out var sfi) ? sfi.GetString() : null;
         static Dictionary<string, string> Map(JsonElement root, string name) =>
             root.TryGetProperty(name, out var m)
-                ? m.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, string>();
-        return new RouteCatalog(frameworks, skipFolders, skipFiles, Map(root, "languages"), Map(root, "functionDefs"));
+                ? m.EnumerateObject()
+                    .SelectMany(p => p.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(ext => (ext, p.Value)))
+                    .ToDictionary(x => x.ext, x => x.Value.GetString()!, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        static Dictionary<string, IReadOnlyList<Regex>> Lists(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var m)
+                ? m.EnumerateObject()
+                    .SelectMany(p => p.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(ext => (ext, p.Value)))
+                    .ToDictionary(
+                        x => x.ext,
+                        x => (IReadOnlyList<Regex>)x.Value.EnumerateArray()
+                            .Select(r => new Regex(r.GetString()!, RegexOptions.Multiline, RegexTimeout)).ToList(),
+                        StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, IReadOnlyList<Regex>>(StringComparer.OrdinalIgnoreCase);
+
+        var functionDefs = Map(root, "functionDefs");
+        var modules = new ModuleRules(
+            Lists(root, "imports"),
+            Lists(root, "exports"),
+            Map(root, "modules"),
+            Map(root, "firstParam").ToDictionary(
+                p => p.Key, p => new Regex(p.Value, RegexOptions.Singleline, RegexTimeout), StringComparer.OrdinalIgnoreCase),
+            functionDefs,
+            RegexTimeout);
+        return new RouteCatalog(frameworks, skipFolders, skipFiles, Map(root, "languages"), functionDefs, modules);
     }
 
     /// <summary>
@@ -138,20 +163,27 @@ public sealed class RouteCatalog
         return files;
     }
 
-    /// <summary>Every route declared in the given files.</summary>
+    /// <summary>Every route declared in the given files, under the prefixes its router is mounted at.</summary>
     public IReadOnlyList<SourceRoute> Find(IReadOnlyList<(string Path, string Text)> files)
     {
-        var routes = new List<SourceRoute>();
+        var facts = new List<FileFacts>();
         foreach (var (file, text) in files)
         {
             var extension = Path.GetExtension(file);
             var name = Path.GetFileName(file);
+            var fileFacts = new FileFacts(file, text);
             foreach (var framework in frameworks.Where(f => f.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase)
                                                             && (f.FileNames is null || f.FileNames.IsMatch(name))))
             {
-                routes.AddRange(framework.Find(text, file));
+                framework.Find(text, file, fileFacts);
             }
+
+            facts.Add(fileFacts);
         }
+
+        // routers mounted under a prefix, in this file or another one
+        var mounts = new RouteMounts(facts, modules);
+        var routes = facts.SelectMany(f => f.Routes.SelectMany(r => mounts.Place(f, r))).ToList();
 
         // a handler declared elsewhere (Express, Go, Axum): look its function up by name
         var withSignatures = routes.Select(r => r.Signature is not null || r.Handler is null ? r : Lookup(r, files)).ToList();
@@ -220,21 +252,32 @@ public sealed class RouteCatalog
     /// <summary>A function's parameter list from its '(' and, when it follows, its body in braces.</summary>
     internal static (string Signature, string? Body) SignatureAndBody(string text, int open)
     {
-        var signature = TypeIndex.Balanced(text, open, '(', ')');
-        var close = open + signature.Length + 1;
-        // the body: the next '{' within a short return type, if any
-        var brace = text.IndexOf('{', Math.Min(close, text.Length));
-        string? body = null;
-        if (brace >= 0 && brace - close < 200 && !text[close..brace].Contains(';', StringComparison.Ordinal))
+        var (signature, brace, end) = FunctionBounds(text, open);
+        if (brace < 0)
         {
-            body = TypeIndex.Balanced(text, brace, '{', '}');
-            if (body.Length > MaxBody)
-            {
-                body = body[..MaxBody];
-            }
+            return (signature, null);
         }
 
-        return (signature, body);
+        var body = text[(brace + 1)..Math.Min(end, text.Length)];
+        return (signature, body.Length > MaxBody ? body[..MaxBody] : body);
+    }
+
+    /// <summary>
+    /// A function's parameter list from its '(', and where its body's braces are when one follows
+    /// (-1 when none does: a call, or a declaration without a body).
+    /// </summary>
+    internal static (string Signature, int Brace, int End) FunctionBounds(string text, int open)
+    {
+        var signature = TypeIndex.Balanced(text, open, '(', ')');
+        var close = Math.Min(open + signature.Length + 1, text.Length);
+        // the body: the next '{' within a short return type, if any
+        var brace = text.IndexOf('{', close);
+        if (brace >= 0 && brace - close < 200 && !text[close..brace].Contains(';', StringComparison.Ordinal))
+        {
+            return (signature, brace, brace + TypeIndex.Balanced(text, brace, '{', '}').Length + 1);
+        }
+
+        return (signature, -1, -1);
     }
 
     private IEnumerable<string> Files(string root, HashSet<string>? extensions, IReadOnlyCollection<string> exclude)
@@ -352,12 +395,16 @@ public sealed class RouteCatalog
 
     private sealed record PrefixPattern(Regex Regex, Regex? PrefixFromArgs, bool ObjectScope);
 
+    private sealed record MountPattern(Regex Regex, Regex? PrefixFromArgs, bool ReplacesOwnPrefix, bool TargetIsLastArg, string? Block);
+
     private sealed record Framework(
         string Name,
         IReadOnlyList<string> Extensions,
         Regex? FileNames,
         IReadOnlyList<RoutePattern> Routes,
         IReadOnlyList<PrefixPattern> Prefixes,
+        IReadOnlyList<MountPattern> Mounts,
+        Regex? RouteObjects,
         Regex? Handler,
         Regex? InlineHandler)
     {
@@ -385,26 +432,40 @@ public sealed class RouteCatalog
                     Rx(p, "regex", RegexOptions.Multiline)!, Rx(p, "prefixFromArgs"),
                     p.TryGetProperty("scope", out var scope) && scope.GetString() == "object")).ToList()
                 : [];
+            var mounts = f.TryGetProperty("mounts", out var ms)
+                ? ms.EnumerateArray().Select(p => new MountPattern(
+                    Rx(p, "regex", RegexOptions.Multiline)!, Rx(p, "prefixFromArgs"),
+                    Flag(p, "replacesOwnPrefix"), Flag(p, "targetIsLastArg"),
+                    p.TryGetProperty("block", out var block) ? block.GetString() : null)).ToList()
+                : [];
             return new Framework(
                 f.GetProperty("name").GetString()!,
                 f.GetProperty("extensions").EnumerateArray().Select(x => x.GetString()!).ToList(),
                 Rx(f, "files"),
-                routes, prefixes, Rx(f, "handler"), Rx(f, "inlineHandler"));
+                routes, prefixes, mounts, Rx(f, "routeObjects"), Rx(f, "handler"), Rx(f, "inlineHandler"));
         }
 
-        public IEnumerable<SourceRoute> Find(string text, string file)
+        /// <summary>
+        /// The routes, router variables and mounts this framework declares in a file, added to its facts.
+        /// A route keeps its path as declared (with a controller's prefix); the prefixes of its router
+        /// and of where that router is mounted are added once every file is read.
+        /// </summary>
+        public void Find(string text, string file, FileFacts facts)
         {
             var following = new List<(int Index, string Prefix)>();
-            var byObject = new Dictionary<string, string>();
             foreach (var pattern in Prefixes)
             {
                 foreach (Match m in SafeMatches(pattern.Regex, text))
                 {
-                    var prefix = m.Groups["prefix"].Success
-                        ? m.Groups["prefix"].Value
-                        : pattern.PrefixFromArgs?.Match(m.Groups["args"].Value) is { Success: true } pm
-                            ? pm.Groups["prefix"].Value
-                            : null;
+                    var (prefix, constant) = PrefixOf(m, pattern.PrefixFromArgs);
+                    if (pattern.ObjectScope && m.Groups["object"].Success)
+                    {
+                        // a router variable, with or without a prefix of its own
+                        facts.Declare(m.Groups["object"].Value, new Declaration(
+                            m.Index, prefix, constant, m.Groups["parent"].Success ? m.Groups["parent"].Value : null));
+                        continue;
+                    }
+
                     if (prefix is null)
                     {
                         continue;
@@ -416,34 +477,125 @@ public sealed class RouteCatalog
                         prefix = prefix.Replace("[controller]", controller, StringComparison.OrdinalIgnoreCase);
                     }
 
-                    if (pattern.ObjectScope && m.Groups["object"].Success)
+                    following.Add((m.Index, prefix));
+                }
+            }
+
+            foreach (var pattern in Mounts)
+            {
+                foreach (Match m in SafeMatches(pattern.Regex, text))
+                {
+                    if (MountOf(pattern, m, text) is { } mount)
                     {
-                        byObject[m.Groups["object"].Value] = prefix;
-                    }
-                    else
-                    {
-                        following.Add((m.Index, prefix));
+                        facts.Mounts.Add(mount);
                     }
                 }
             }
 
             following.Sort((a, b) => a.Index.CompareTo(b.Index));
-            var found = new List<SourceRoute>();
             foreach (var pattern in Routes)
             {
                 foreach (Match m in SafeMatches(pattern.Regex, text))
                 {
-                    found.AddRange(RoutesOf(pattern, m, text, file, following, byObject));
+                    facts.Routes.AddRange(RoutesOf(pattern, m, text, file, following, facts));
                 }
             }
-
-            return found;
         }
 
-        private IEnumerable<SourceRoute> RoutesOf(
-            RoutePattern pattern, Match m, string text, string file,
-            List<(int Index, string Prefix)> following, Dictionary<string, string> byObject)
+        private static (string? Prefix, string? Constant) PrefixOf(Match m, Regex? fromArgs)
         {
+            if (m.Groups["prefix"].Success)
+            {
+                return (m.Groups["prefix"].Value, null);
+            }
+
+            if (fromArgs?.Match(m.Groups["args"].Value) is { Success: true } a)
+            {
+                return (a.Groups["prefix"].Success ? a.Groups["prefix"].Value : null,
+                    a.Groups["constant"].Success ? a.Groups["constant"].Value : null);
+            }
+
+            return (null, null);
+        }
+
+        private static MountSite? MountOf(MountPattern pattern, Match m, string text)
+        {
+            var (prefix, constant) = PrefixOf(m, pattern.PrefixFromArgs);
+            var target = m.Groups["target"].Success ? m.Groups["target"].Value
+                : pattern.TargetIsLastArg ? TypeIndex.SplitTop(m.Groups["args"].Value, ',').LastOrDefault(a => a.Trim().Length > 0)?.Trim()
+                : null;
+            var function = m.Groups["function"].Success ? m.Groups["function"].Value : null;
+            var (start, end) = pattern.Block switch
+            {
+                "braces" => Braces(text, m.Index + m.Length - 1),
+                "do-end" => DoEnd(text, m.Index + m.Length),
+                _ => (-1, -1),
+            };
+            if ((pattern.Block is not null && start < 0) || (pattern.Block is null && target is null && function is null))
+            {
+                return null;
+            }
+
+            return new MountSite(
+                m.Index,
+                m.Groups["object"].Success ? m.Groups["object"].Value : null,
+                prefix,
+                constant,
+                pattern.ReplacesOwnPrefix && (prefix ?? constant) is not null,
+                target,
+                function,
+                start,
+                end);
+        }
+
+        /// <summary>The block in braces starting at or after <paramref name="from"/>.</summary>
+        private static (int Start, int End) Braces(string text, int from)
+        {
+            var brace = text.IndexOf('{', Math.Max(0, from));
+            return brace < 0 ? (-1, -1) : (brace, brace + TypeIndex.Balanced(text, brace, '{', '}').Length + 1);
+        }
+
+        private static readonly Regex DoEndWords = new(
+            @"\b(?:do\b(?!:)|fn\b|end\b)|^[ \t]*(?:def|class|module|begin|case|if|unless|while|until)\b",
+            RegexOptions.Multiline, RegexTimeout);
+
+        /// <summary>A Ruby or Elixir block: from just after its 'do' to its matching 'end'.</summary>
+        private static (int Start, int End) DoEnd(string text, int from)
+        {
+            var depth = 1;
+            try
+            {
+                // strings and comments can hold the words too
+                var masked = Regex.Replace(text, @"""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)*'|#[^\n]*",
+                    x => new string(' ', x.Length), RegexOptions.None, RegexTimeout);
+                for (var w = DoEndWords.Match(masked, from); w.Success; w = w.NextMatch())
+                {
+                    depth += w.Value.TrimStart() == "end" ? -1 : 1;
+                    if (depth == 0)
+                    {
+                        return (from - 1, w.Index);
+                    }
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+            }
+
+            return (-1, -1);
+        }
+
+        private IEnumerable<FoundRoute> RoutesOf(
+            RoutePattern pattern, Match m, string text, string file,
+            List<(int Index, string Prefix)> following, FileFacts facts)
+        {
+            var routerName = m.Groups["object"].Success ? m.Groups["object"].Value : null;
+            if (routerName is not null && RouteObjects is not null
+                && !RouteObjects.IsMatch(routerName) && !facts.Objects.ContainsKey(routerName))
+            {
+                // axios.get('/x') is a call, not a route
+                yield break;
+            }
+
             var args = m.Groups["args"].Success ? m.Groups["args"].Value : "";
             var path = m.Groups["path"].Success
                 ? m.Groups["path"].Value
@@ -478,18 +630,14 @@ public sealed class RouteCatalog
             }
 
             path = path.Replace("[action]", handler ?? "", StringComparison.OrdinalIgnoreCase);
+            // a controller's prefix; a router variable's own comes later, with where it is mounted
             var prefix = "";
             var rooted = path.StartsWith('/') || path.StartsWith("~/", StringComparison.Ordinal);
-            if (!pattern.NoPrefix && !(pattern.RootedIgnoresPrefix && rooted))
+            if (!pattern.NoPrefix && !(pattern.RootedIgnoresPrefix && rooted)
+                && (routerName is null || !facts.Objects.ContainsKey(routerName))
+                && following.LastOrDefault(f => f.Index < m.Index) is { Prefix: { } fp })
             {
-                if (m.Groups["object"].Success && byObject.TryGetValue(m.Groups["object"].Value, out var p))
-                {
-                    prefix = p;
-                }
-                else if (following.LastOrDefault(f => f.Index < m.Index) is { Prefix: { } fp })
-                {
-                    prefix = fp;
-                }
+                prefix = fp;
             }
 
             var full = Join(prefix, path);
@@ -505,7 +653,7 @@ public sealed class RouteCatalog
                              ("GET", full), ("POST", full), ("GET", item), ("PUT", item), ("PATCH", item), ("DELETE", item),
                          })
                 {
-                    yield return new SourceRoute(method, route, null, file, line, Name);
+                    yield return new FoundRoute(new SourceRoute(method, route, null, file, line, Name), routerName, m.Index);
                 }
 
                 yield break;
@@ -518,7 +666,8 @@ public sealed class RouteCatalog
                     var method = hm.Groups["method"].Value.ToUpperInvariant();
                     if (Verbs.Contains(method))
                     {
-                        yield return new SourceRoute(method, full, hm.Groups["name"].Value, file, line, Name);
+                        yield return new FoundRoute(
+                            new SourceRoute(method, full, hm.Groups["name"].Value, file, line, Name), routerName, m.Index);
                     }
                 }
 
@@ -540,7 +689,8 @@ public sealed class RouteCatalog
 
             foreach (var method in methods.Where(Verbs.Contains))
             {
-                yield return new SourceRoute(method, full, handler, file, line, Name, signature, body, pathTypes);
+                yield return new FoundRoute(
+                    new SourceRoute(method, full, handler, file, line, Name, signature, body, pathTypes), routerName, m.Index);
             }
         }
 
