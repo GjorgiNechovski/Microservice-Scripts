@@ -446,22 +446,24 @@ export function triedResult(tried: Tried | null, id: string): TryResult | undefi
 }
 
 /**
- * The picked routes whose last Try answered 401, 403 or 5xx: sent like that in
- * the load test, every one of them fails, and a run where many requests fail
- * can't be trusted.
+ * The picked routes whose last Try didn't answer 2xx/3xx (a 401, a 404, a 500,
+ * or nothing at all): the load test counts every such answer as a failed
+ * request, and a run where many requests fail can't be trusted.
  */
 export function triedErrors(tried: Tried | null, picked: RouteChoice[]): { route: RouteChoice; result: TryResult }[] {
   return picked
     .map((route) => ({ route, result: triedResult(tried, route.id) }))
-    .filter((e): e is { route: RouteChoice; result: TryResult } => {
-      const status = e.result?.status;
-      return status === 401 || status === 403 || (status !== null && status !== undefined && status >= 500);
-    });
+    .filter((e): e is { route: RouteChoice; result: TryResult } => e.result !== undefined && !e.result.ok);
 }
 
-/** What an error status most likely means here, in a few words. */
-export function errorMeaning(status: number): string {
+/** What a failed answer most likely means here, in a few words. */
+export function errorMeaning(status: number | null): string {
+  if (status === null) return 'nothing answered: is the address right, and the app up?';
   if (status === 401) return 'needs a login: no valid token was sent';
   if (status === 403) return "the user (or key) isn't allowed to do this";
-  return 'the app failed while answering';
+  if (status === 404) return 'not found: check the path, or an id in it that may not exist';
+  if (status === 405) return "this method isn't allowed on this path";
+  if (status === 400 || status === 422) return "the app doesn't accept the body or the values sent";
+  if (status >= 500) return 'the app failed while answering';
+  return 'the app refused the request';
 }

@@ -180,13 +180,16 @@ export function stepStatus(
     const picked = selectedRoutes(state.routes, state.components);
     const features = featureList(picked).length;
     const errors = triedErrors(state.tried, picked).length;
+    const untried = state.load.script === 'generate' && state.tried === null;
     return {
       ready: true,
       message:
         `${picked.length} route${picked.length === 1 ? '' : 's'} in ${features} feature${features === 1 ? '' : 's'}` +
         (errors > 0
           ? `, but ${errors} answered with an error when tried: see the red badges.`
-          : '. Go on to check what each feature needs.'),
+          : untried
+            ? ', not tried yet: Try shows whether they work before the run does.'
+            : '. Go on to check what each feature needs.'),
     };
   }
   if (step === STEP.features) {

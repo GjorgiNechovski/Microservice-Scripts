@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { STEP, routesBlockers, setKind, settle, stepStatus, toScript, toSpecDocument } from './model';
+import {
+  STEP,
+  featuresBlockers,
+  mergeScan,
+  routesBlockers,
+  setKind,
+  settle,
+  stepStatus,
+  toScript,
+  toSpecDocument,
+  unreachedServices,
+} from './model';
 import {
   estimatedMinutes,
+  loadProblems,
   routeDefaults,
   withExamples,
   featureComponents,
@@ -49,7 +61,7 @@ describe('the routes found in the code', () => {
       'Give the address the load test sends requests to (http://…).',
     ]);
     expect(stepStatus(STEP.routes, state, 'ready').message).toBe(
-      '3 routes in 3 features. Go on to check what each feature needs.',
+      '3 routes in 3 features, not tried yet: Try shows whether they work before the run does.',
     );
   });
 });
@@ -197,28 +209,35 @@ describe('routes that answered errors when tried', () => {
     ok: status !== null && status < 400,
   });
 
-  it('are the picked ones that got 401, 403 or 5xx', () => {
+  it('are the picked ones that answered anything but 2xx/3xx', () => {
     const state = routedState();
     state.routes = state.routes.map((r) => ({ ...r, selected: true }));
     const picked = selectedRoutes(state.routes, state.components).slice(0, 3);
     expect(picked).toHaveLength(3);
-    const statuses = [401, 404, 503]; // a missing login, a wrong id, the app failing
+    const statuses = [401, 200, 404]; // a missing login, fine, a wrong id: k6 counts both errors as failed
     const tried = { ids: picked.map((r) => r.id), response: { login: null, tokenFound: null, requests: statuses.map(answer) } };
 
     expect(triedErrors(tried, picked).map((e) => [e.route.id, e.result.status])).toEqual([
       [picked[0].id, 401],
-      [picked[2].id, 503],
+      [picked[2].id, 404],
     ]);
     // unticked since, or never tried: nothing to ask about
-    expect(triedErrors(tried, picked.slice(1)).map((e) => e.result.status)).toEqual([503]);
+    expect(triedErrors(tried, picked.slice(1)).map((e) => e.result.status)).toEqual([404]);
     expect(triedErrors(null, picked)).toEqual([]);
+    // nothing answered at all counts too
+    const silent = { ...tried, response: { ...tried.response, requests: [answer(null), answer(200), answer(503)] } };
+    expect(triedErrors(silent, picked).map((e) => e.result.status)).toEqual([null, 503]);
   });
 
   it('make the routes step say so', () => {
     const state = routedState();
     const picked = selectedRoutes(state.routes, state.components);
-    const ok = stepStatus(STEP.routes, state, 'ready');
-    expect(ok.message).toMatch(/Go on to check what each feature needs/);
+    expect(stepStatus(STEP.routes, state, 'ready').message).toMatch(/not tried yet/);
+    const working = {
+      ...state,
+      tried: { ids: [picked[0].id], response: { login: null, tokenFound: null, requests: [answer(200)] } },
+    };
+    expect(stepStatus(STEP.routes, working, 'ready').message).toMatch(/Go on to check what each feature needs/);
     const failing = {
       ...state,
       tried: { ids: [picked[0].id], response: { login: null, tokenFound: null, requests: [answer(401)] } },
@@ -227,5 +246,49 @@ describe('routes that answered errors when tried', () => {
       ready: true,
       message: expect.stringMatching(/but 1 answered with an error when tried/),
     });
+  });
+});
+
+describe('a service no feature reaches', () => {
+  it("blocks the features step, since the run couldn't measure it", () => {
+    let state = routedState();
+    state = {
+      ...state,
+      components: state.components.map((c) => (c.id === 'shop/billing' ? { ...c, kind: 'service' } : c)),
+      // none of billing's routes picked, and no feature needs it
+      routes: state.routes.map((r) => (r.service === 'shop/billing' ? { ...r, selected: false } : r)),
+    };
+    expect(unreachedServices(state).map((c) => c.id)).toEqual(['shop/billing']);
+    expect(featuresBlockers(state)).toContain('No feature reaches billing: add it to one, or leave it out of the analysis (shown above).');
+
+    // picking one of its routes reaches it
+    const reached = { ...state, routes: state.routes.map((r) => (r.service === 'shop/billing' ? { ...r, selected: true } : r)) };
+    expect(unreachedServices(reached)).toEqual([]);
+    // or it is left out of the analysis
+    const leftOut = {
+      ...state,
+      components: state.components.map((c) => (c.id === 'shop/billing' ? { ...c, kind: 'notModelled' as const } : c)),
+    };
+    expect(unreachedServices(leftOut)).toEqual([]);
+  });
+});
+
+describe('the load settings', () => {
+  it('take durations the analyzer reads back: hours, minutes, seconds, in that order', () => {
+    const load = routedState().load;
+    for (const ok of ['2m', '90s', '1h30m', '1m30s']) expect(loadProblems({ ...load, duration: ok })).toEqual([]);
+    for (const odd of ['500ms', '30s1m', '2', '']) expect(loadProblems({ ...load, duration: odd })).toHaveLength(1);
+  });
+});
+
+describe('a compose project Docker knows', () => {
+  it('keeps the name it was started under, unless the user changed it', () => {
+    const scan = {
+      projects: [{ directory: '/apps/shop-app', files: [], name: 'shop' }],
+      dockerfiles: [],
+      warnings: [],
+    };
+    expect(mergeScan([], scan)[0].name).toBe('shop');
+    expect(mergeScan([{ directory: '/apps/shop-app', files: [], name: 'mine' }], scan)[0].name).toBe('mine');
   });
 });

@@ -106,10 +106,14 @@ public sealed class RequestShapes
             var (place, name) = Classify(p, language, placeholders, types);
             if (place is "path" or "query")
             {
-                var example = Example(p.Type, name, 0, [], notes, types);
+                // an untyped path parameter: the type the path gives it (<int:id>), or a number for an id
+                var type = place == "path" && string.IsNullOrWhiteSpace(p.Type)
+                    ? route.PathTypes?.GetValueOrDefault(name) ?? (IdLike(name) ? "int" : p.Type)
+                    : p.Type;
+                var example = Example(type, name, 0, [], notes, types);
                 if (example is JsonValue v)
                 {
-                    shapes.Add(new ParamShape(name, place, Simplify(p.Type), Text(v), place == "path" || IsRequired(p, language)));
+                    shapes.Add(new ParamShape(name, place, Simplify(type), Text(v), place == "path" || IsRequired(p, language)));
                 }
                 else if (place == "query" && types.Find(BaseName(p.Type)) is { IsEnum: false } dto)
                 {
@@ -154,7 +158,7 @@ public sealed class RequestShapes
 
         foreach (var p in shapes.Where(s => s.In == "path"))
         {
-            notes.Add($"{{{p.Name}}} is {p.Example} as a placeholder: use one that exists in your data.");
+            notes.Add(PlaceholderNote(p));
         }
 
         return new RequestShape(shapes, body, bodyType, bodySource, notes.Distinct().ToList());
@@ -263,7 +267,7 @@ public sealed class RequestShapes
 
         foreach (var p in shapes.Where(s => s.In == "path"))
         {
-            notes.Add($"{{{p.Name}}} is {p.Example} as a placeholder: use one that exists in your data.");
+            notes.Add(PlaceholderNote(p));
         }
 
         AddUniqueNote(route, body, notes);
@@ -634,4 +638,16 @@ public sealed class RequestShapes
 
     private static string Text(JsonValue v) =>
         v.TryGetValue<string>(out var s) ? s : v.ToJsonString().Trim('"').ToLowerInvariant();
+
+    /// <summary>A name that holds an id: id, blog_id, userId.</summary>
+    private static bool IdLike(string name) =>
+        name.Equals("id", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("_id", StringComparison.OrdinalIgnoreCase)
+        || (name.Length > 2 && name.EndsWith("Id", StringComparison.Ordinal));
+
+    /// <summary>"{blog_id} is 1 as a placeholder…"; a word is quoted, so it doesn't read as part of the sentence.</summary>
+    private static string PlaceholderNote(ParamShape p) =>
+        double.TryParse(p.Example, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)
+            ? $"{{{p.Name}}} is {p.Example} as a placeholder: use one that exists in your data."
+            : $"{{{p.Name}}} is \u201c{p.Example}\u201d as a placeholder: use one that exists in your data.";
 }

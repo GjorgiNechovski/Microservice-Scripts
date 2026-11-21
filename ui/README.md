@@ -66,11 +66,14 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    and sends the token with every request. The locked value (the password, the
    token, the key) is never written to a file: the test reads it from
    `LOGIN_PASSWORD` or `AUTH_TOKEN`, which the app passes to the run. **Try**
-   sends one request per picked route and shows how each answered. If a picked
-   route answered 401, 403 or 5xx, Next asks first: sent like that it fails on
-   every request of the load test, and a run where many requests fail is marked
-   not to be trusted. Continue anyway when you expect the errors (testing how the
-   app handles bad requests). Bring your own k6 script instead if you have one.
+   sends one request per picked route and shows how each answered (without
+   cookies, as the load test sends them). If a picked route answered anything but
+   2xx/3xx (a 401, a 404, a 500, or nothing), Next asks first, with what each
+   answer most likely means: sent like that it fails on every request of the load
+   test, and a run where many requests fail is marked not to be trusted.
+   Continue anyway when you expect the errors (testing how the app handles bad
+   requests). Bring your own k6 script instead if you have one; the app passes it
+   only `THINK_TIME`.
 5. **Features.** Which components each feature needs, which decides every
    availability figure. Each starts from what its requests touch: the gateways
    they pass, the service that handles them, and what that service depends on

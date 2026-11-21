@@ -330,4 +330,22 @@ public sealed class LanguageTests : IDisposable
     {
         Assert.Equal(language, PortGuesser.RuntimeOf(image.Split(' ')[0])?.Language);
     }
+
+    [Fact]
+    public void A_flask_converter_gives_its_path_parameter_a_type()
+    {
+        Write("app.py", "from flask import Flask\napp = Flask(__name__)\n"
+            + "@app.route('/products/<int:product_id>')\ndef get_product(product_id):\n    pass\n"
+            + "@app.route('/users/<name>')\ndef user(name):\n    pass\n"
+            + "@app.route('/orders/<order_id>')\ndef order(order_id):\n    pass\n");
+
+        var product = Shape("GET", "/products/{product_id}");
+        Assert.Equal("1", Assert.Single(product.Params).Example);
+        Assert.Contains("{product_id} is 1 as a placeholder: use one that exists in your data.", product.Notes);
+        // untyped: a number for an id, a word otherwise, quoted so it doesn't read as part of the sentence
+        Assert.Equal("1", Assert.Single(Shape("GET", "/orders/{order_id}").Params).Example);
+        var user = Shape("GET", "/users/{name}");
+        Assert.Equal("string", Assert.Single(user.Params).Example);
+        Assert.Contains("{name} is \u201cstring\u201d as a placeholder: use one that exists in your data.", user.Notes);
+    }
 }

@@ -73,8 +73,12 @@ export function RoutesStep({ state, setState }: Props) {
   const setAuth = (patch: Partial<AuthSettings>) => setState((s) => ({ ...s, auth: { ...s.auth, ...patch } }));
 
   const attempt = useMutation({
-    mutationFn: () => api.tryRoutes(toLoadScript(state.baseUrl, state.auth, picked), state.secret),
-    onSuccess: (response) => setState((s) => ({ ...s, tried: { ids: picked.map((r) => r.id), response } })),
+    // the routes as they were sent: ticking one while Try runs mustn't shift the answers onto other rows
+    mutationFn: async () => {
+      const ids = picked.map((r) => r.id);
+      return { ids, response: await api.tryRoutes(toLoadScript(state.baseUrl, state.auth, picked), state.secret) };
+    },
+    onSuccess: ({ ids, response }) => setState((s) => ({ ...s, tried: { ids, response } })),
   });
   const resultFor = (id: string): TryResult | undefined => triedResult(tried, id);
 
@@ -122,7 +126,7 @@ export function RoutesStep({ state, setState }: Props) {
           <TextInput
             mt="sm"
             label="Your k6 script"
-            description="Its full path, or a path relative to the folder you save the spec in. Its requests are yours; the routes below still say which features there are."
+            description="Its full path, or a path relative to the folder you save the spec in. Its requests are yours; the routes below still say which features there are. The app passes it THINK_TIME (the pause) only: a password or token has to come from the script or from env_passthrough in the spec."
             placeholder="/home/me/shop/perf/load.js"
             value={state.load.ownScript}
             onChange={(e) => {
@@ -214,6 +218,7 @@ export function RoutesStep({ state, setState }: Props) {
 
       <AddRoute
         services={state.components.filter((c) => c.kind === 'service')}
+        routes={state.routes}
         onAdd={(route) => setState((s) => ({ ...s, routes: [...s.routes, route] }))}
       />
 
@@ -385,8 +390,8 @@ function UnreadCode({ state }: { state: WizardState }) {
               ) : (
                 <>
                   <b>{name}</b> is written in {c.language}, but no HTTP route was recognised in its code. It may serve
-                  none (a queue consumer, say: then there's nothing to add), or use a framework this app doesn't know
-                  yet.
+                  none (a queue consumer, say), or use a framework this app doesn't know yet. A service no request
+                  reaches can't be measured: mark it <i>not modelled</i> in Components, or add its routes here.
                 </>
               )}
             </Text>
@@ -419,12 +424,16 @@ function ResultBadge({ result }: { result: TryResult }) {
   );
 }
 
-function AddRoute({ services, onAdd }: { services: DraftComponent[]; onAdd: (r: RouteChoice) => void }) {
+type AddRouteProps = { services: DraftComponent[]; routes: RouteChoice[]; onAdd: (r: RouteChoice) => void };
+
+function AddRoute({ services, routes, onAdd }: AddRouteProps) {
   const [method, setMethod] = useState<HttpMethod>('GET');
   const [path, setPath] = useState('');
-  const [service, setService] = useState<string | null>(services[0]?.id ?? null);
+  // chosen by the user: a wrong guess would give the feature the wrong components
+  const [service, setService] = useState<string | null>(null);
   const add = () => {
     if (!service || !path.trim()) return;
+    const words = path.trim().replace(/[{}:]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     onAdd({
       id: `manual:${method} ${path.trim()}:${Date.now()}`,
       method,
@@ -432,13 +441,10 @@ function AddRoute({ services, onAdd }: { services: DraftComponent[]; onAdd: (r: 
       body: method === 'GET' || method === 'DELETE' ? '' : '{}',
       share: 1,
       selected: true,
-      feature:
-        `${method.toLowerCase()}_${path.trim().replace(/[{}:]/g, '').replace(/[^A-Za-z0-9]+/g, '_')}`.replace(
-          /_+$/,
-          '',
-        ),
+      feature: words ? `${method.toLowerCase()}_${words}` : method.toLowerCase(),
       service,
-      through: [],
+      // reached the way the service's other routes are: through the same gateways
+      through: routes.find((r) => r.service === service && r.through.length > 0)?.through ?? [],
       source: null,
       note: null,
     });
@@ -457,7 +463,7 @@ function AddRoute({ services, onAdd }: { services: DraftComponent[]; onAdd: (r: 
         <TextInput flex={1} label="Path" placeholder="/api/orders" value={path}
           onChange={(e) => setPath(e.currentTarget.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()} />
-        <Select w={220} label="Handled by" data={services.map((s) => ({ value: s.id, label: s.name }))}
+        <Select w={220} label="Handled by" placeholder="Pick the service" data={services.map((s) => ({ value: s.id, label: s.name }))}
           value={service} onChange={setService} />
         <Button variant="default" leftSection={<IconPlus size={16} />} disabled={!service || !path.trim()} onClick={add}>
           Add
@@ -478,6 +484,8 @@ type ConfirmProps = {
 export function RouteErrorsConfirm({ errors, opened, onStay, onContinue }: ConfirmProps) {
   const login = errors.some((e) => e.result.status === 401 || e.result.status === 403);
   const failed = errors.some((e) => (e.result.status ?? 0) >= 500);
+  const refused = errors.some((e) => e.result.status !== null && e.result.status >= 400 && e.result.status < 500
+    && e.result.status !== 401 && e.result.status !== 403);
   return (
     <Modal opened={opened} onClose={onStay} title="Some routes answered with errors" size="lg" centered>
       <Stack gap="sm">
@@ -495,10 +503,10 @@ export function RouteErrorsConfirm({ errors, opened, onStay, onContinue }: Confi
               </Badge>
               <Code style={{ wordBreak: 'break-all' }}>{route.path}</Code>
               <Badge color="red" variant="light" style={{ flexShrink: 0 }}>
-                {result.status}
+                {result.status ?? 'no answer'}
               </Badge>
               <Text size="sm" c="dimmed">
-                {errorMeaning(result.status ?? 500)}
+                {errorMeaning(result.status)}
               </Text>
             </Group>
           ))}
@@ -508,6 +516,12 @@ export function RouteErrorsConfirm({ errors, opened, onStay, onContinue }: Confi
         </Text>
         <List size="sm" spacing={4}>
           {login && <List.Item>set up the login in Authorization on this page, then press Try again;</List.Item>}
+          {refused && (
+            <List.Item>
+              for a 400, 404, 405 or 422, fix the path, the example values or the body in the route&apos;s row (an id
+              in the path has to exist in your data), then press Try again;
+            </List.Item>
+          )}
           {failed && (
             <List.Item>
               for a 5xx, the app&apos;s logs say why. A missing login can show up as a 5xx too, and so can an example

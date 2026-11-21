@@ -9,6 +9,7 @@ namespace MicroserviceScripts.Ui.Routes;
 /// <param name="File">The file it is declared in.</param>
 /// <param name="Signature">The handler's parameter list as written, when it could be found.</param>
 /// <param name="HandlerBody">The handler's body, when found (Go and Rust read the request inside it).</param>
+/// <param name="PathTypes">Types the path itself gives its parameters (Flask's &lt;int:id&gt;, ASP.NET's {id:int}).</param>
 public sealed record SourceRoute(
     string Method,
     string Path,
@@ -17,7 +18,8 @@ public sealed record SourceRoute(
     int Line,
     string Framework,
     string? Signature = null,
-    string? HandlerBody = null);
+    string? HandlerBody = null,
+    IReadOnlyDictionary<string, string>? PathTypes = null);
 
 /// <summary>Which language a folder's code is in, and whether routes can be read from it.</summary>
 /// <param name="Language">The language most of its source files are in; null when none was recognised.</param>
@@ -258,7 +260,9 @@ public sealed class RouteCatalog
                 var name = Path.GetFileName(entry);
                 if (Directory.Exists(entry))
                 {
+                    // a symlinked folder can loop back to an ancestor or lead out of the code
                     if (!skipFolders.Contains(name) && !name.StartsWith('.')
+                        && !File.GetAttributes(entry).HasFlag(FileAttributes.ReparsePoint)
                         && !exclude.Any(e => PathsEqual(e, entry)))
                     {
                         pending.Push(entry);
@@ -299,6 +303,32 @@ public sealed class RouteCatalog
         p = Regex.Replace(p, @"\(\?P<(\w+)>[^)]*\)", "{$1}");               // django named groups
         p = "/" + p.TrimStart('~').Trim('/');
         return Regex.Replace(p, "/{2,}", "/");
+    }
+
+    /// <summary>
+    /// The types a declared path gives its parameters, before <see cref="NormalizePath"/> drops them:
+    /// Flask/Werkzeug converters (&lt;int:id&gt;, &lt;uuid:key&gt;) and ASP.NET constraints ({id:int}, {id:min(1)}).
+    /// </summary>
+    public static IReadOnlyDictionary<string, string>? PathTypes(string path)
+    {
+        var types = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(path, @"<(\w+):(\w+)>"))
+        {
+            types[m.Groups[2].Value] = m.Groups[1].Value;
+        }
+
+        foreach (Match m in Regex.Matches(path, @"\{\*{0,2}(\w+):(\w+)"))
+        {
+            // number ranges are numbers; the length and pattern constraints are text
+            types[m.Groups[1].Value] = m.Groups[2].Value.ToLowerInvariant() switch
+            {
+                "min" or "max" or "range" => "int",
+                "minlength" or "maxlength" or "length" or "alpha" or "regex" or "required" => "string",
+                var t => t,
+            };
+        }
+
+        return types.Count > 0 ? types : null;
     }
 
     /// <summary>A prefix and a path joined with exactly one slash between them.</summary>
@@ -463,6 +493,7 @@ public sealed class RouteCatalog
             }
 
             var full = Join(prefix, path);
+            var pathTypes = PathTypes($"{prefix}/{path}");
             var line = 1 + text.AsSpan(0, m.Index).Count('\n');
 
             if (pattern.Crud)
@@ -509,7 +540,7 @@ public sealed class RouteCatalog
 
             foreach (var method in methods.Where(Verbs.Contains))
             {
-                yield return new SourceRoute(method, full, handler, file, line, Name, signature, body);
+                yield return new SourceRoute(method, full, handler, file, line, Name, signature, body, pathTypes);
             }
         }
 

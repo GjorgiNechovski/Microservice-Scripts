@@ -24,6 +24,9 @@ public class LoadTests
     public async Task The_script_logs_in_once_and_picks_requests_by_share()
     {
         var js = K6ScriptWriter.Write(Finki(Login), "FINKI blogging platform", new DateTime(2026, 11, 19));
+        // a JSON content type only with a body (as Try sends it), and the token looked for where Send looks
+        Assert.Contains("r.body === null ? ACCEPT_JSON : JSON_HEADERS", js);
+        Assert.Contains("Array.isArray(json) ? []", js);
 
         Assert.Contains("const BASE_URL = (__ENV.BASE_URL || \"http://localhost:8000\")", js);
         Assert.Contains("{ name: \"GET /blog/blogs\", method: \"GET\", path: \"/blog/blogs?skip=0&limit=20\", body: null, share: 3 },", js);
