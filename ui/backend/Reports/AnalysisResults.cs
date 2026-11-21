@@ -84,8 +84,19 @@ public static partial class AnalysisResults
     [GeneratedRegex(@"^load-(\d+)$")]
     private static partial Regex LevelFolder();
 
-    [GeneratedRegex(@"^[A-Za-z0-9._-]+\.png$")]
-    private static partial Regex ChartName();
+    [GeneratedRegex(@"^levels tested \(virtual users\):\s*([\d,\s]+)$")]
+    private static partial Regex TestedLine();
+
+    /// <summary>
+    /// A plain file name ending in .png: no folder in it, not hidden. The
+    /// analyzer names per-feature charts after the operation, which can hold
+    /// spaces or non-ASCII letters.
+    /// </summary>
+    private static bool IsChartName(string name) =>
+        name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+        && name == Path.GetFileName(name)
+        && !name.StartsWith('.')
+        && name.IndexOfAny(['/', '\\', '\0']) < 0;
 
     [GeneratedRegex(@"^\s*(running \(|default\s|\S+\s+\[\s*\d+%\s*\])")]
     private static partial Regex K6Progress();
@@ -94,20 +105,31 @@ public static partial class AnalysisResults
     private static partial Regex Ansi();
 
     /// <summary>
-    /// Every result under <paramref name="roots"/>, a few folders deep, newest
-    /// first. Dependency and build folders are not searched, and a result's
-    /// own folders aren't searched for more.
+    /// Every result in <paramref name="exact"/> (checked as they are, first:
+    /// where the app's run writes) and under <paramref name="roots"/>, a few
+    /// folders deep, newest first. Each root has its own budget of folders, so
+    /// one big folder can't starve the rest; dependency and build folders are
+    /// not searched, and a result's own folders aren't searched for more.
     /// </summary>
-    public static IReadOnlyList<ResultSummary> Find(IEnumerable<string> roots, int depth = 3, int maxFolders = 5000)
+    public static IReadOnlyList<ResultSummary> Find(
+        IEnumerable<string> roots, IEnumerable<string?>? exact = null, int depth = 3, int maxFoldersPerRoot = 3000)
     {
         var found = new Dictionary<string, ResultSummary>(StringComparer.Ordinal);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var visited = 0;
+        foreach (var folder in (exact ?? []).OfType<string>().Where(f => !string.IsNullOrWhiteSpace(f)).Select(Full))
+        {
+            if (Directory.Exists(folder) && Summarize(folder) is { } result)
+            {
+                found[folder] = result;
+            }
+        }
+
+        var seen = new HashSet<string>(found.Keys, StringComparer.Ordinal);
         foreach (var root in roots.Where(r => !string.IsNullOrWhiteSpace(r)).Select(Full).Distinct())
         {
+            var visited = 0;
             var queue = new Queue<(string Folder, int Depth)>();
             queue.Enqueue((root, 0));
-            while (queue.Count > 0 && visited < maxFolders)
+            while (queue.Count > 0 && visited < maxFoldersPerRoot)
             {
                 var (folder, level) = queue.Dequeue();
                 if (!seen.Add(folder) || !Directory.Exists(folder))
@@ -187,7 +209,7 @@ public static partial class AnalysisResults
     /// </summary>
     public static string? Chart(string folder, string name)
     {
-        if (!ChartName().IsMatch(name))
+        if (!IsChartName(name))
         {
             return null;
         }
@@ -238,20 +260,53 @@ public static partial class AnalysisResults
 
         var charts = Directory.EnumerateFiles(folder, "*.png")
             .Select(p => (Name: Path.GetFileName(p), At: Written(p)!.Value))
-            .Where(c => ChartName().IsMatch(c.Name))
+            .Where(c => IsChartName(c.Name))
             .OrderBy(c => c.Name, StringComparer.Ordinal)
             .Select(c => new ResultChart(c.Name, c.At, Other(c.At)))
             .ToList();
         return new ResultPart(folder, users, texts, charts);
     }
 
-    private static List<(int Users, string Folder)> Levels(string folder) =>
-        Subfolders(folder)
+    /// <summary>
+    /// A sweep's levels: its load-N folders, only those its scaling report
+    /// says it tested when it says so (an earlier sweep's other levels stay in
+    /// the folder, and aren't this one's).
+    /// </summary>
+    private static List<(int Users, string Folder)> Levels(string folder)
+    {
+        var tested = Tested(Path.Combine(folder, ScalingReport));
+        return Subfolders(folder)
             .Select(f => (Match: LevelFolder().Match(Path.GetFileName(f)), Folder: f))
             .Where(l => l.Match.Success && File.Exists(Path.Combine(l.Folder, Report)))
-            .Select(l => (int.Parse(l.Match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), l.Folder))
-            .OrderBy(l => l.Item1)
+            .Select(l => (Users: int.Parse(l.Match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), l.Folder))
+            .Where(l => tested is null || tested.Contains(l.Users))
+            .OrderBy(l => l.Users)
             .ToList();
+    }
+
+    /// <summary>The "levels tested (virtual users): 5, 10, 20" line of a scaling report; null without one.</summary>
+    private static HashSet<int>? Tested(string scalingReport)
+    {
+        try
+        {
+            foreach (var line in File.ReadLines(scalingReport).Take(10))
+            {
+                var m = TestedLine().Match(line);
+                if (m.Success)
+                {
+                    return m.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(v => int.TryParse(v, out var n) ? n : -1)
+                        .Where(n => n >= 0)
+                        .ToHashSet();
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return null;
+    }
 
     /// <summary>When the first load-test file after the report was written: a later run that didn't get to write one.</summary>
     private static DateTimeOffset? Later(IEnumerable<string> files, DateTimeOffset report)
@@ -323,8 +378,10 @@ public static partial class AnalysisResults
     {
         try
         {
-            return Directory.EnumerateDirectories(folder)
-                .Where(d => !Path.GetFileName(d).StartsWith('.') && !SkipFolders.Contains(Path.GetFileName(d)))
+            return new DirectoryInfo(folder).EnumerateDirectories()
+                .Where(d => !d.Name.StartsWith('.') && !SkipFolders.Contains(d.Name)
+                            && !d.Attributes.HasFlag(FileAttributes.ReparsePoint))   // no symlink loops
+                .Select(d => d.FullName)
                 .Order(StringComparer.Ordinal)
                 .ToList();
         }

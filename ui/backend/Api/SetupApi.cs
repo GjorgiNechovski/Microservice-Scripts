@@ -183,13 +183,15 @@ public static class SetupApi
 
         api.MapPost("/results/find", FindResults);
 
-        api.MapGet("/results", (string folder, string? spec, RunManager runs) =>
-            AnalysisResults.Read(folder) is { } view
+        api.MapGet("/results", (string? folder, string? spec, RunManager runs) =>
+            FullPath(folder) is { } full && AnalysisResults.Read(full) is { } view
                 ? Results.Ok(view with { Summary = ResultFreshness.Mark(view.Summary, runs.Status(int.MaxValue), FullPath(spec)) })
                 : Results.NotFound(new { error = $"There are no analyzer results in {folder}." }));
 
-        api.MapGet("/results/chart", (string folder, string name) =>
-            AnalysisResults.Chart(folder, name) is { } path ? Results.File(path, "image/png") : Results.NotFound());
+        api.MapGet("/results/chart", (string? folder, string? name) =>
+            FullPath(folder) is { } full && name is not null && AnalysisResults.Chart(full, name) is { } path
+                ? Results.File(path, "image/png")
+                : Results.NotFound());
     }
 
     /// <summary>
@@ -210,7 +212,9 @@ public static class SetupApi
         roots.Add(repo.Root);
 
         var searched = roots.Select(FullPath).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
-        var found = AnalysisResults.Find(searched).Select(r => ResultFreshness.Mark(r, run, spec)).ToList();
+        // where the app's run writes is checked first, whatever the size of the other folders
+        var exact = new[] { run.OutDir, spec is null ? null : Path.Combine(Path.GetDirectoryName(spec)!, "analysis") };
+        var found = AnalysisResults.Find(searched, exact).Select(r => ResultFreshness.Mark(r, run, spec)).ToList();
         return new ResultList(found, searched);
     }
 

@@ -155,4 +155,56 @@ public sealed class ResultsTests : IDisposable
         Assert.False(edited.Current);
         Assert.NotNull(edited.SpecSavedAt);
     }
+
+    [Fact]
+    public void A_sweep_has_only_the_levels_its_report_says_it_tested()
+    {
+        Write("analysis/scaling-report.txt", "\nLOAD-SWEEP SCALING REPORT -- shop\nlevels tested (virtual users): 5, 20\n");
+        Single("analysis/load-5");
+        Single("analysis/load-20");
+        Single("analysis/load-7", at: now.AddDays(-3));   // an earlier sweep's level, still in the folder
+
+        var view = AnalysisResults.Read(Path.Combine(root.FullName, "analysis"))!;
+
+        Assert.Equal([5, 20], view.Summary.Levels);
+        Assert.Equal([5, 20], view.Parts.Select(p => p.Users));
+    }
+
+    [Fact]
+    public void Where_the_run_wrote_is_found_however_big_the_other_folders()
+    {
+        var ours = Single("app/perf/analysis");
+        for (var i = 0; i < 30; i++)
+        {
+            Directory.CreateDirectory(Path.Combine(root.FullName, "big", $"d{i:00}"));
+        }
+
+        // a budget too small for the big folder alone
+        var found = AnalysisResults.Find([Path.Combine(root.FullName, "big")], [ours], maxFoldersPerRoot: 10);
+
+        Assert.Equal(ours, Assert.Single(found).Folder);
+    }
+
+    [Fact]
+    public void A_chart_named_after_a_feature_with_spaces_is_served()
+    {
+        var folder = Single("analysis");
+        Write("analysis/layer4_invest_read a blog.png", "png");
+
+        Assert.NotNull(AnalysisResults.Chart(folder, "layer4_invest_read a blog.png"));
+        Assert.Contains(AnalysisResults.Read(folder)!.Parts[0].Charts, c => c.Name == "layer4_invest_read a blog.png");
+        Assert.Null(AnalysisResults.Chart(folder, ".hidden.png"));
+    }
+
+    [Theory]
+    [InlineData("137 2026-11-21T10:05:00.123456789Z", true)]     // killed during the run
+    [InlineData("0 2026-11-21T10:05:00Z", false)]                // a job that finished on its own
+    [InlineData("143 2026-11-21T10:05:00Z", false)]              // stopped (SIGTERM), by someone else
+    [InlineData("137 2026-11-21T09:00:00Z", false)]              // killed before the run began
+    [InlineData("", false)]
+    public void Only_containers_the_run_killed_are_started_again(string inspected, bool expected)
+    {
+        var started = new DateTimeOffset(2026, 11, 21, 10, 0, 0, TimeSpan.Zero);
+        Assert.Equal(expected, RunManager.KilledSince(inspected, started));
+    }
 }

@@ -112,7 +112,9 @@ export function ResultsPage({ state, run, onGoToRun }: Props) {
   // a folder the user opened: pick the newest result in it (or under it)
   useEffect(() => {
     if (!missing || !find.data || find.isFetching) return;
-    const inside = results.find((r) => r.folder === missing || r.folder.startsWith(`${missing}/`));
+    const inside = results.find(
+      (r) => r.folder === missing || r.folder.startsWith(`${missing}/`) || r.folder.startsWith(`${missing}\\`),
+    );
     if (inside) {
       setSelected(inside.folder);
       setMissing(null);
@@ -277,12 +279,20 @@ function OverviewView({ part }: { part: ResultPart }) {
 }
 
 function PartView({ part }: { part: ResultPart }) {
+  const validity = textOf(part, 'validity');
+  const invalid = validity ? parseValidity(validity.text)?.verdict.startsWith('INVALID') === true : false;
   const explained = textOf(part, 'report-explained');
   const comparison = textOf(part, 'comparison-explained');
   const hotspots = textOf(part, 'hotspots-explained');
   return (
     <Stack gap="lg">
       <Trust part={part} />
+      {invalid && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Everything below comes from a test that went wrong">
+          Read it to see what went wrong, not as results: the summary, the charts and the reports all use the numbers
+          the trust check above rejects.
+        </Alert>
+      )}
       {explained ? (
         <ExplainedView text={explained} />
       ) : (
