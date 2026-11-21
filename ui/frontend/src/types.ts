@@ -45,7 +45,13 @@ export type ComponentKind = 'service' | 'infrastructure' | 'notModelled' | 'unsu
 
 export type Dependency = { id: string; via: string };
 
-export type FoldedMember = { id: string; role: 'replica' | 'in front'; reason: string };
+export type FoldedMember = {
+  id: string;
+  role: 'replica' | 'in front';
+  reason: string;
+  /** False for a copy told apart only by a number (db-1, db-2): it may be a separate database. */
+  confirmed: boolean;
+};
 
 export type DraftComponent = {
   id: string;

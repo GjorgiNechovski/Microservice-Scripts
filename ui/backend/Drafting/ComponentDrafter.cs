@@ -22,7 +22,11 @@ public enum ComponentKind
 public sealed record Dependency(string Id, string Via);
 
 /// <param name="Role">"replica" (another instance of it) or "in front" (a pooler or proxy for it alone).</param>
-public sealed record FoldedMember(string Id, string Role, string Reason);
+/// <param name="Confirmed">
+/// False for a copy told apart only by a number (db-1, db-2): that can as well be a second, separate
+/// database, so the user says which before its instance is counted.
+/// </param>
+public sealed record FoldedMember(string Id, string Role, string Reason, bool Confirmed = true);
 
 /// <summary>One component of the draft: a compose service, plus the ones folded into it.</summary>
 public sealed record DraftComponent(
@@ -89,6 +93,8 @@ public sealed class ComponentDrafter(
 
     private static readonly Regex ReplicaSuffix = new(
         @"^(?<base>.+?)(?:[-_]?\d+|[-_](?:replica|secondary|slave|standby|follower|read|readonly|ro|backup|mirror))$");
+
+    private static readonly Regex NumberSuffix = new(@"[-_]?\d+$");
 
     private sealed class Work(ComposeProject project, ComposeService service)
     {
@@ -317,6 +323,8 @@ public sealed class ComponentDrafter(
     /// Several compose services that are the same thing run twice: the same
     /// image (or build) and the same name apart from a suffix (db and db-2,
     /// redis-1 and redis-2). They become one component with several instances.
+    /// A copy told apart only by a number is left for the user to confirm,
+    /// unless the copies name each other (a primary host, partner or seed nodes).
     /// </summary>
     private static void FoldReplicas(List<Work> project)
     {
@@ -330,15 +338,19 @@ public sealed class ComponentDrafter(
             var primary = members.FirstOrDefault(m => m.Service.Name == group.Key.Base)
                 ?? members.FirstOrDefault(m => members.Any(o => o.DependsOn.Any(d => d.Id == m.Id)))
                 ?? members.OrderBy(m => m.Service.Name, StringComparer.Ordinal).First();
+            var clustered = Clustered(members, group.Key.Base);
             foreach (var m in members.Where(m => m != primary))
             {
+                // db-replica says what it is; db-2 could as well be a second database of its own
+                var numbered = NumberSuffix.IsMatch(m.Service.Name) && !clustered;
                 m.FoldedInto = primary;
                 primary.Folded.Add(new FoldedMember(m.Id, "replica",
                     $"another copy of {primary.Service.Name} (same {(m.Service.Image is null ? "build" : "image")}, "
                     + $"named {m.Service.Name}): "
                     + (primary.Kind == ComponentKind.Infrastructure
-                        ? "counted as one more instance"
-                        : "analysed together with it")));
+                        ? numbered ? "one more instance, if it can take over when the other fails" : "counted as one more instance"
+                        : "analysed together with it"),
+                    Confirmed: !numbered));
             }
 
             if (primary.Kind == ComponentKind.Infrastructure)
@@ -352,6 +364,27 @@ public sealed class ComponentDrafter(
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The copies' settings name each other as hosts (REPMGR_PARTNER_NODES=db,db-2,
+    /// RABBITMQ_SEED_NODE=rabbitmq-1): one clustered thing, not separate ones that look alike.
+    /// </summary>
+    private static bool Clustered(List<Work> members, string baseName)
+    {
+        var numbered = new Regex($@"(?:^|//|@|[\s,;=])(?<name>{Regex.Escape(baseName)}[-_]?\d+)(?=:|/|$|[\s,;])");
+        foreach (var m in members)
+        {
+            var settings = m.Service.Environment.Values.Concat(m.Service.Command).Concat(m.Service.Entrypoint).ToList();
+            var others = members.Where(o => o != m).Select(o => o.Service.Name).ToList();
+            if (settings.Any(v => others.Any(o => NamesHost(v, o))
+                                  || numbered.Matches(v).Any(x => x.Groups["name"].Value != m.Service.Name)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

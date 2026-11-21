@@ -44,6 +44,36 @@ describe('ComponentsStep', () => {
     expect(latest!.components.map((c) => c.id)).toContain('shop/db-2');
   });
 
+  it('asks whether numbered copies take over for each other before counting them', async () => {
+    const base = draftedState();
+    const unconfirmed = {
+      ...base,
+      components: base.components.map((c) =>
+        c.id === 'shop/db' ? { ...c, folded: c.folded.map((f) => ({ ...f, confirmed: false })) } : c,
+      ),
+    };
+    let latest: WizardState | undefined;
+    const { unmount } = render(<Harness initial={unconfirmed} onState={(s) => (latest = s)} />);
+
+    expect(screen.getByText('Can db-2 take over when db fails?')).toBeInTheDocument();
+    expect(componentBlockers(latest!.components)).toContain(
+      'Answer the question under db: can its numbered copies take over for each other?',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, count 2 instances' }));
+    expect(latest!.components.find((c) => c.id === 'shop/db')?.instances).toBe(2);
+    expect(screen.queryByText('Can db-2 take over when db fails?')).not.toBeInTheDocument();
+    expect(componentBlockers(latest!.components).some((b) => b.includes('numbered copies'))).toBe(false);
+    unmount();
+
+    render(<Harness initial={unconfirmed} onState={(s) => (latest = s)} />);
+    await userEvent.click(screen.getByRole('button', { name: "No, they're separate" }));
+    const db = latest!.components.find((c) => c.id === 'shop/db')!;
+    expect(db.instances).toBe(1);
+    expect(db.folded).toEqual([]);
+    expect(latest!.components.map((c) => c.id)).toContain('shop/db-2');
+  });
+
   it('forgets an earlier save once anything changes', async () => {
     let latest: WizardState | undefined;
     const saved = { ...draftedState(), savedPath: '/repos/shop/perf/shop.toml' };

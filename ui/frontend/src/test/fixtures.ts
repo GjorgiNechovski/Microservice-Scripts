@@ -39,7 +39,14 @@ export function draftedState(): WizardState {
       hasHealthcheck: true,
       instances: 2,
       instancesReason: '2 copies: db, db-2',
-      folded: [{ id: 'shop/db-2', role: 'replica', reason: 'another copy of db (same image, named db-2): counted as one more instance' }],
+      folded: [
+        {
+          id: 'shop/db-2',
+          role: 'replica',
+          reason: 'another copy of db (same image, named db-2): counted as one more instance',
+          confirmed: true,
+        },
+      ],
     }),
     component({ id: 'shop/billing', kind: 'unsure', image: 'myorg/billing:1.4', builtFromSource: false }),
   ];

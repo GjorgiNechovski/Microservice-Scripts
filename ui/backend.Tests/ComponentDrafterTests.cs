@@ -37,6 +37,9 @@ public class ComponentDrafterTests
         Assert.Equal(2, Get(draft, "rabbitmq").Instances);
         Assert.Equal(1, Get(draft, "zookeeper").Instances);
 
+        // its database and broker copies name each other (partner nodes, a seed node): no question to ask
+        Assert.All(draft.Components.SelectMany(c => c.Folded), f => Assert.True(f.Confirmed));
+
         // [readiness] of the hand-written spec, each with where it came from
         Assert.Equal(8080, Get(draft, "user-service").ReadinessPort);
         Assert.Equal(".NET 8 listens on 8080 by default", Get(draft, "user-service").ReadinessSource);
@@ -174,5 +177,33 @@ public class ComponentDrafterTests
 
         Assert.Equal("shop-auth/authsvc", dependency.Id);
         Assert.Contains("AUTH_URL", dependency.Via);
+    }
+
+    [Fact]
+    public void Numbered_copies_that_dont_name_each_other_are_left_to_confirm()
+    {
+        var shop = Inline("shop", """
+            {
+              "name": "shop",
+              "services": {
+                "api": { "build": { "context": "/x/api" }, "environment": { "DB": "postgres://db-1/x", "CACHE": "redis" } },
+                "db-1": { "image": "postgres:16" },
+                "db-2": { "image": "postgres:16" },
+                "redis": { "image": "redis:7" },
+                "redis-replica": { "image": "redis:7", "command": ["redis-server", "--replicaof", "redis", "6379"] }
+              }
+            }
+            """);
+
+        var draft = Fixtures.Draft(shop);
+
+        // two postgres containers could as well be two databases: the user says
+        var db = Get(draft, "db-1");
+        Assert.False(Assert.Single(db.Folded).Confirmed);
+        Assert.Equal(2, db.Instances);
+        Assert.Contains("if it can take over", db.Folded[0].Reason);
+
+        // a replica says what it is
+        Assert.True(Assert.Single(Get(draft, "redis").Folded).Confirmed);
     }
 }

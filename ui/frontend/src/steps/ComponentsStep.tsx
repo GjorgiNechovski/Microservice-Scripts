@@ -22,9 +22,12 @@ import { KindLegend } from '../components/KindLegend';
 import { FOLDED, KINDS } from '../kinds';
 import {
   componentBlockers,
+  confirmCopies,
   nameProblems,
+  separateCopies,
   servicesNotInDraft,
   setKind,
+  unconfirmedCopies,
   unfold,
   updateComponent,
   type WizardState,
@@ -128,6 +131,9 @@ export function ComponentsStep({ state, setState }: Props) {
                     onChange={(patch) => change((all) => updateComponent(all, c.id, patch))}
                     onKind={(kind) => change((all) => setKind(all, c.id, kind))}
                     onUnfold={(memberId) => change((all) => unfold(all, c.id, memberId, draft.services))}
+                    onCopies={(same) =>
+                      change((all) => (same ? confirmCopies(all, c.id) : separateCopies(all, c.id, draft.services)))
+                    }
                   />
                 ))}
               </Table.Tbody>
@@ -176,10 +182,13 @@ type RowProps = {
   onChange: (patch: Partial<DraftComponent>) => void;
   onKind: (kind: ComponentKind) => void;
   onUnfold: (memberId: string) => void;
+  /** Whether the numbered copies take over for each other (true) or are separate (false). */
+  onCopies: (same: boolean) => void;
 };
 
-function ComponentRow({ component: c, problem, onChange, onKind, onUnfold }: RowProps) {
+function ComponentRow({ component: c, problem, onChange, onKind, onUnfold, onCopies }: RowProps) {
   const modelled = c.kind === 'service' || c.kind === 'infrastructure';
+  const unconfirmed = unconfirmedCopies(c);
   const what = c.image ?? (c.builtFromSource ? `built from source${c.language ? ` (${c.language})` : ''}` : '');
   return (
     <Table.Tr>
@@ -211,8 +220,13 @@ function ComponentRow({ component: c, problem, onChange, onKind, onUnfold }: Row
         {c.folded.map((f) => (
           <Group key={f.id} gap={6} wrap="nowrap" align="flex-start">
             <Tooltip multiline w={320} label={FOLDED[f.role].help}>
-              <Badge size="xs" variant="light" color={FOLDED[f.role].color} style={{ flexShrink: 0, cursor: 'help' }}>
-                {FOLDED[f.role].label}
+              <Badge
+                size="xs"
+                variant="light"
+                color={unconfirmed.includes(f) ? 'yellow' : FOLDED[f.role].color}
+                style={{ flexShrink: 0, cursor: 'help' }}
+              >
+                {unconfirmed.includes(f) ? 'copy?' : FOLDED[f.role].label}
               </Badge>
             </Tooltip>
             <Text size="xs" c="dimmed">
@@ -225,6 +239,13 @@ function ComponentRow({ component: c, problem, onChange, onKind, onUnfold }: Row
             </Tooltip>
           </Group>
         ))}
+        {unconfirmed.length > 0 && (
+          <CopiesQuestion
+            name={c.composeService}
+            copies={unconfirmed.map((f) => f.id.split('/').pop() ?? f.id)}
+            onAnswer={onCopies}
+          />
+        )}
         {c.dependsOn.length > 0 && (
           <Text size="xs" c="dimmed">
             depends on {c.dependsOn.map((d) => d.id.split('/').pop()).join(', ')}
@@ -288,5 +309,35 @@ function ComponentRow({ component: c, problem, onChange, onKind, onUnfold }: Row
         ) : null}
       </Table.Td>
     </Table.Tr>
+  );
+}
+
+type CopiesProps = { name: string; copies: string[]; onAnswer: (same: boolean) => void };
+
+/**
+ * Copies told apart only by a number (db-1, db-2) are often a cluster, but can
+ * as well be separate databases that happen to run the same image. Counting
+ * them as instances of one says either can stand in for the other.
+ */
+function CopiesQuestion({ name, copies, onAnswer }: CopiesProps) {
+  const others = copies.join(' and ');
+  return (
+    <Paper withBorder p="xs" mt={8} style={{ borderColor: 'var(--mantine-color-yellow-5)' }}>
+      <Text size="sm" fw={500}>
+        Can {others} take over when {name} fails?
+      </Text>
+      <Text size="xs" c="dimmed">
+        They run the same image with only a number in the name, and nothing in their settings links them. They may be
+        one {name} running {copies.length + 1} times, or separate ones that each keep their own data.
+      </Text>
+      <Group gap="xs" mt={6}>
+        <Button size="compact-xs" onClick={() => onAnswer(true)}>
+          Yes, count {copies.length + 1} instances
+        </Button>
+        <Button size="compact-xs" variant="default" onClick={() => onAnswer(false)}>
+          No, they're separate
+        </Button>
+      </Group>
+    </Paper>
   );
 }

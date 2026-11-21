@@ -43,7 +43,12 @@ the key the page can't do anything. Stop the app with Ctrl+C.
 3. **Components.** Every compose service is sorted into *service*,
    *infrastructure*, *not modelled* (frontends, admin UIs, monitoring, one-off
    jobs) or *unsure*, with the reason shown. Replicas (`db` and `db-2`) and
-   poolers or load balancers in front of a single component fold into it.
+   poolers or load balancers in front of a single component fold into it. A copy
+   told apart only by a number (`db-1`, `db-2`) whose settings don't name the
+   others (as `REPMGR_PARTNER_NODES` or `RABBITMQ_SEED_NODE` do in a cluster) may
+   as well be a separate database: for infrastructure the app asks whether it
+   takes over when the other fails before counting it as an instance, since
+   redundancy that isn't there makes the availability figures too good.
    Readiness ports are guessed from the compose file, the Dockerfile and the
    runtime, and the source of each guess is shown. You correct anything: rename,
    reclassify, take a folded service back out, add one by hand, and decide every

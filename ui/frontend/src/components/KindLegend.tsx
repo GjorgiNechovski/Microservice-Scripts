@@ -84,6 +84,16 @@ export function KindLegend() {
           ))}
           <Marker
             mark={
+              <Badge size="xs" variant="light" color="yellow">
+                copy?
+              </Badge>
+            }
+          >
+            A copy told apart only by a number (db-1, db-2) with nothing in its settings linking it to the other. It may
+            be a separate database, so you say whether it takes over when the other fails.
+          </Marker>
+          <Marker
+            mark={
               <ActionIcon size="xs" variant="subtle" component="span" aria-hidden>
                 <IconArrowBackUp size={12} />
               </ActionIcon>

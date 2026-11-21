@@ -29,6 +29,7 @@ import type {
   ComponentKind,
   DraftComponent,
   DraftResponse,
+  FoldedMember,
   LoadScript,
   ProjectSelection,
   RunState,
@@ -363,6 +364,11 @@ export function componentBlockers(components: DraftComponent[]): string[] {
   if (unsure > 0) {
     blockers.push(`${unsure} component${unsure === 1 ? '' : 's'} still need${unsure === 1 ? 's' : ''} you to decide what ${unsure === 1 ? 'it is' : 'they are'}.`);
   }
+  for (const c of components) {
+    if (unconfirmedCopies(c).length > 0) {
+      blockers.push(`Answer the question under ${c.name}: can its numbered copies take over for each other?`);
+    }
+  }
   if (!components.some((c) => c.kind === 'service')) {
     blockers.push('Mark at least one service: the analysis needs an application tier.');
   }
@@ -407,6 +413,32 @@ export function unfold(
     }),
     { ...own, folded: [] },
   ];
+}
+
+/**
+ * Copies folded into an infrastructure component that only a number tells
+ * apart (db-1, db-2): they may be separate databases, so the user confirms
+ * before they count as more instances.
+ */
+export function unconfirmedCopies(c: DraftComponent): FoldedMember[] {
+  return c.kind === 'infrastructure' ? c.folded.filter((f) => f.role === 'replica' && f.confirmed === false) : [];
+}
+
+/** The numbered copies do take over for each other: they stay as instances of the component. */
+export function confirmCopies(components: DraftComponent[], id: string): DraftComponent[] {
+  return components.map((c) =>
+    c.id === id ? { ...c, folded: c.folded.map((f) => (f.role === 'replica' ? { ...f, confirmed: true } : f)) } : c,
+  );
+}
+
+/** The numbered copies are separate things: each becomes a component of its own. */
+export function separateCopies(
+  components: DraftComponent[],
+  id: string,
+  services: Record<string, DraftComponent>,
+): DraftComponent[] {
+  const parent = components.find((c) => c.id === id);
+  return (parent ? unconfirmedCopies(parent) : []).reduce((all, f) => unfold(all, id, f.id, services), components);
 }
 
 /** Compose services not in the draft at all, neither as a component nor folded into one. */
