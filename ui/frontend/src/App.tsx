@@ -17,6 +17,7 @@ import {
   IconArrowLeft,
   IconArrowRight,
   IconChartBar,
+  IconHistory,
   IconCircleCheck,
   IconInfoCircle,
   IconMoon,
@@ -26,6 +27,8 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
+import { forget, keep, restore, type Restored } from './persist';
+import { ago } from './results';
 import {
   STEP,
   STEPS,
@@ -49,10 +52,17 @@ import { SaveStep } from './steps/SaveStep';
 import { UsersStep } from './steps/UsersStep';
 
 export default function App({ hasToken }: { hasToken: boolean }) {
-  const [active, setActive] = useState(0);
+  // where the user left off, before a reload or a restart of the app
+  const [restored, setRestored] = useState<Restored | null>(() => (hasToken ? restore() : null));
+  const [active, setActive] = useState(restored?.active ?? 0);
   const [prerequisites, setPrerequisites] = useState<PrerequisiteStatus>('checking');
   const [run, setRun] = useState<RunState>('idle');
-  const [state, setStateRaw] = useState<WizardState>(initialState);
+  const [state, setStateRaw] = useState<WizardState>(restored?.state ?? initialState);
+  useEffect(() => {
+    if (!hasToken) return;
+    const later = setTimeout(() => keep(state, active), 300);
+    return () => clearTimeout(later);
+  }, [hasToken, state, active]);
   // the run, wherever the user is: the Run step follows its output, this only its state (a run that ends while
   // the results are open; one still going after the page was reloaded)
   const runState = useQuery({
@@ -89,6 +99,12 @@ export default function App({ hasToken }: { hasToken: boolean }) {
   const next = () => {
     if (active === STEP.routes && routeErrors.length > 0) setConfirmRoutes(true);
     else go(active + 1);
+  };
+  const startOver = () => {
+    forget();
+    setRestored(null);
+    setStateRaw(initialState);
+    go(0);
   };
 
   return (
@@ -130,6 +146,15 @@ export default function App({ hasToken }: { hasToken: boolean }) {
           ) : page === 'results' ? (
             <ResultsPage state={state} run={run} onGoToRun={() => go(STEP.run)} />
           ) : (
+            <>
+            {restored && (
+              <RestoredNotice
+                restored={restored}
+                needsSecret={state.secret === '' && state.auth.kind !== 'none'}
+                onStartOver={startOver}
+                onClose={() => setRestored(null)}
+              />
+            )}
             <Stepper active={active} onStepClick={go} allowNextStepsSelect={false} mb="xl" size="sm">
               <Stepper.Step label={STEPS[0]} description="What's needed">
                 <PrerequisitesStep onStatus={setPrerequisites} />
@@ -156,6 +181,7 @@ export default function App({ hasToken }: { hasToken: boolean }) {
                 <RunStep state={state} setState={setState} onRunState={setRun} onShowResults={() => show('results')} />
               </Stepper.Step>
             </Stepper>
+            </>
           )}
         </Container>
       </AppShell.Main>
@@ -189,6 +215,41 @@ export default function App({ hasToken }: { hasToken: boolean }) {
 }
 
 type Page = 'setup' | 'results';
+
+type RestoredProps = {
+  restored: Restored;
+  /** The login needs a password or key, and those are never kept. */
+  needsSecret: boolean;
+  onStartOver: () => void;
+  onClose: () => void;
+};
+
+/** Says the wizard was picked up where it was left, and offers a clean start. */
+function RestoredNotice({ restored, needsSecret, onStartOver, onClose }: RestoredProps) {
+  return (
+    <Alert
+      color="blue"
+      variant="light"
+      icon={<IconHistory size={18} />}
+      title={`Picked up where you left off${restored.savedAt ? ` (${ago(new Date(restored.savedAt).toISOString())})` : ''}`}
+      withCloseButton
+      closeButtonLabel="Hide"
+      onClose={onClose}
+      mb="md"
+    >
+      <Group justify="space-between" align="flex-end" gap="sm">
+        <Text size="sm" style={{ flex: 1, minWidth: 240 }}>
+          Everything you filled in is as you left it. If the compose files or the code changed since, read them again in
+          step 2 (Project).
+          {needsSecret ? ' The password or key for the login is never kept: enter it again before trying the routes or running.' : ''}
+        </Text>
+        <Button size="xs" variant="default" onClick={onStartOver}>
+          Start over
+        </Button>
+      </Group>
+    </Alert>
+  );
+}
 
 type StepBarProps = {
   active: number;

@@ -4,6 +4,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { keep, restore } from './persist';
+import { draftedState } from './test/fixtures';
 import type { PrerequisiteCheck } from './types';
 
 function answerChecks(checks: PrerequisiteCheck[]) {
@@ -69,5 +71,20 @@ describe('the results page', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Back to the setup' }));
     expect(await screen.findByRole('button', { name: /Next: Project/ })).toBeInTheDocument();
+  });
+});
+
+describe('after a reload', () => {
+  it('picks up where the user left off, and can start over', async () => {
+    answerChecks([docker(true)]);
+    keep({ ...draftedState(), folders: ['/repos/shop'], auth: { ...draftedState().auth, kind: 'bearer' } }, 0);
+    renderApp();
+
+    expect(await screen.findByText(/Picked up where you left off/)).toBeInTheDocument();
+    expect(screen.getByText(/The password or key for the login is never kept/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(screen.queryByText(/Picked up where you left off/)).not.toBeInTheDocument();
+    expect(restore()).toBeNull();
   });
 });

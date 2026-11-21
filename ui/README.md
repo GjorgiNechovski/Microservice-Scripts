@@ -138,6 +138,12 @@ them or a later run there didn't finish. A file or chart left in the folder by
 a different run than the report is marked, and such charts are hidden until
 asked for.
 
+The wizard keeps what you filled in, in this browser, so reloading the page or
+restarting the app (it keeps its address) picks up where you left off, with
+**Start over** to clear it. The password, token or key is never kept: you enter
+it again. If the compose files or the code changed since, read them again in
+step 2.
+
 It starts no containers until you press **Start it for me** (your app), **Save
 and start** (the monitoring stack) or **Start** (the run), and edits none of
 your app's files; it writes the spec and the load script you save, and

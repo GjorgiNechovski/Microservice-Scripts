@@ -2,7 +2,11 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // the wizard keeps itself in localStorage: each test starts afresh
+  localStorage.clear();
+});
 
 // jsdom lacks what Mantine measures with.
 Object.defineProperty(window, 'matchMedia', {
