@@ -142,6 +142,12 @@ public static class SetupApi
                 return Results.UnprocessableEntity(new { problems });
             }
 
+            // a second click while it starts: don't write the .env (and its backup) again
+            if (starter.Starting)
+            {
+                return Results.UnprocessableEntity(new { problems = new[] { "It is already being started." } });
+            }
+
             try
             {
                 monitoring.Write(settings);
@@ -262,7 +268,7 @@ public static class SetupApi
         return Results.Ok(new DraftResponse(results, draft, routeDrafter.Draft(projects, draft)));
     }
 
-    private static async Task<IResult> Save(SaveRequest request, SpecChecker checker, CancellationToken ct)
+    private static async Task<IResult> Save(SaveRequest request, SpecChecker checker, RunManager runs, CancellationToken ct)
     {
         var problems = request.Spec.Problems().Concat(request.Script?.Problems() ?? []).ToList();
         if (problems.Count > 0)
@@ -306,6 +312,16 @@ public static class SetupApi
         catch (ArgumentException ex)
         {
             return Results.UnprocessableEntity(new { problems = new[] { ex.Message } });
+        }
+
+        // a running sweep reads its load script again at every level: changing it mid-run mixes two tests
+        if (runs.BusyFolder() is { } busy && string.Equals(Path.GetFullPath(Path.GetDirectoryName(path)!),
+                Path.GetFullPath(busy), StringComparison.Ordinal))
+        {
+            return Results.UnprocessableEntity(new
+            {
+                problems = new[] { $"A run is using the files in {busy}: stop it or wait for it to end before saving there." },
+            });
         }
 
         var existing = new[] { path, scriptPath }.OfType<string>().Where(File.Exists).ToList();

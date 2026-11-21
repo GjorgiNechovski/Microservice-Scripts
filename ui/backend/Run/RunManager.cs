@@ -55,7 +55,6 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
     private readonly List<RunLine> lines = [];
     private int dropped;
     private Process? process;
-    private int pid;
     private RunState state = RunState.Idle;
     private string? specPath;
     private string? outDir;
@@ -65,6 +64,24 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
     private int? exitCode;
     private IReadOnlyList<string> projects = [];
     private IReadOnlyList<string> runningBefore = [];
+    private string runId = "";
+
+    /// <summary>The analyzer names its k6 containers after this (analyzer.collect.loadgen).</summary>
+    public const string RunIdVariable = "MICROSERVICE_SCRIPTS_RUN_ID";
+
+    /// <summary>
+    /// The folder of the spec a run is using, while it runs: its spec and load
+    /// script must not change under it (a sweep reads the script again per level).
+    /// </summary>
+    public string? BusyFolder()
+    {
+        lock (gate)
+        {
+            return state is RunState.Running or RunState.Stopping && specPath is not null
+                ? Path.GetDirectoryName(specPath)
+                : null;
+        }
+    }
 
     public RunStatus Status(int after)
     {
@@ -146,6 +163,9 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
 
         info.Environment["PYTHONUNBUFFERED"] = "1";
         info.Environment["PYTHONIOENCODING"] = "utf-8";
+        // its k6 containers are found by this, not by the pid: a launcher (py -3) runs Python under another one
+        var id = Guid.NewGuid().ToString("N")[..12];
+        info.Environment[RunIdVariable] = id;
         foreach (var (name, value) in request.Secrets ?? new Dictionary<string, string>())
         {
             // only the variables the generated script reads: nothing else of the environment is settable from the page
@@ -177,6 +197,7 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
             exitCode = null;
             projects = found;
             runningBefore = before;
+            runId = id;
             process = started;
             state = RunState.Running;
             Append($"[setup app] python3 -m analyzer {spec} --out {output}"
@@ -198,11 +219,6 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
             }
 
             return null;
-        }
-
-        lock (gate)
-        {
-            pid = started.Id;
         }
 
         started.BeginOutputReadLine();
@@ -263,12 +279,12 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
 
         bool stopped;
-        int id;
+        string id;
         lock (gate)
         {
             stopped = state == RunState.Stopping;
             exitCode = exited.ExitCode;
-            id = pid;
+            id = runId;
         }
 
         if (stopped || exited.ExitCode != 0)
@@ -294,12 +310,14 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
 
     /// <summary>
     /// After a stop or a crash: removes the run's k6 container and starts
-    /// whatever of the app was running when the run began and isn't now.
+    /// again what of the app fault injection may have left down: containers
+    /// running when the run began that were killed (exit 137) since. One that
+    /// finished on its own (a seed job) or was stopped otherwise is left alone.
     /// </summary>
-    private async Task PutBackAsync(int pythonId)
+    private async Task PutBackAsync(string run)
     {
         var k6 = await runner.RunAsync("docker",
-            ["ps", "-aq", "--filter", $"name=microservice-scripts-k6-{pythonId}-"], timeout: TimeSpan.FromSeconds(20));
+            ["ps", "-aq", "--filter", $"name=microservice-scripts-k6-{run}-"], timeout: TimeSpan.FromSeconds(20));
         foreach (var id in Ids(k6.StdOut))
         {
             await runner.RunAsync("docker", ["rm", "-f", id], timeout: TimeSpan.FromSeconds(30));
@@ -307,21 +325,48 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
 
         IReadOnlyList<string> before, wanted;
+        DateTimeOffset since;
         lock (gate)
         {
             before = runningBefore;
             wanted = projects;
+            since = startedAt ?? DateTimeOffset.MinValue;
         }
 
         var now = await RunningContainersAsync(wanted, CancellationToken.None);
-        foreach (var id in before.Except(now))
+        foreach (var container in before.Except(now))
         {
-            var started = await runner.RunAsync("docker", ["start", id], timeout: TimeSpan.FromSeconds(60));
+            var shortId = container[..Math.Min(12, container.Length)];
+            var state = await runner.RunAsync("docker",
+                ["inspect", "--format", "{{.State.ExitCode}} {{.State.FinishedAt}}", container], timeout: TimeSpan.FromSeconds(20));
+            if (!KilledSince(state.StdOut, since))
+            {
+                Add($"[setup app] left container {shortId} as it is: it stopped on its own, not killed by the run", error: false);
+                continue;
+            }
+
+            var started = await runner.RunAsync("docker", ["start", container], timeout: TimeSpan.FromSeconds(60));
             Add(started.Ok
-                    ? $"[setup app] started container {id[..Math.Min(12, id.Length)]} again: it was running when the run began"
-                    : $"[setup app] couldn't start container {id[..Math.Min(12, id.Length)]} again: {started.Error}",
+                    ? $"[setup app] started container {shortId} again: it was running when the run began"
+                    : $"[setup app] couldn't start container {shortId} again: {started.Error}",
                 error: !started.Ok);
         }
+    }
+
+    /// <summary>Whether `docker inspect`'s "exit-code finished-at" says it was killed (137) after <paramref name="since"/>.</summary>
+    public static bool KilledSince(string inspected, DateTimeOffset since)
+    {
+        var parts = inspected.Trim().Split(' ', 2);
+        if (parts.Length != 2 || parts[0] != "137")
+        {
+            return false;
+        }
+
+        // Docker's times carry nanoseconds, more digits than DateTimeOffset reads
+        var at = System.Text.RegularExpressions.Regex.Replace(parts[1].Trim(), @"(\.\d{7})\d+", "$1");
+        return DateTimeOffset.TryParse(at, System.Globalization.CultureInfo.InvariantCulture,
+                   System.Globalization.DateTimeStyles.AssumeUniversal, out var finished)
+               && finished >= since.AddSeconds(-1);
     }
 
     private async Task<IReadOnlyList<string>> RunningContainersAsync(IEnumerable<string> composeProjects, CancellationToken ct)

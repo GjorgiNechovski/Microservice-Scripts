@@ -118,6 +118,17 @@ public class ComposeStarter
         }
     }
 
+    public bool Starting
+    {
+        get
+        {
+            lock (gate)
+            {
+                return state == StartState.Starting;
+            }
+        }
+    }
+
     /// <summary>Starts the projects in the background; returns why it couldn't, or null.</summary>
     public string? Start(IReadOnlyList<ProjectSelection> projects)
     {

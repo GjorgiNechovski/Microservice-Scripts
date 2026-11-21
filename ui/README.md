@@ -95,9 +95,13 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    plan of what it stops and asks once. *The load test only* skips it, leaving
    the availability figures unmeasured. The output follows live. **Stop** asks
    the analyzer to stop (Ctrl+C): it starts again a container it had stopped
-   and removes its k6 container; afterwards the app also starts anything of your
-   app that was running when the run began and isn't any more. The reports land
-   in `analysis/` next to the spec; **See the results** opens them.
+   and removes its k6 container; afterwards the app also starts again any of your
+   app's containers that was running when the run began and was killed since (a
+   job that finished, or a container stopped another way, is left alone). The run
+   stays in view, with Stop, even after the page was reloaded (**A run is going**
+   at the top leads to it). In a sweep, fault injection comes first, before the
+   load levels; in a single run, after the load test. The reports land in
+   `analysis/` next to the spec; **See the results** opens them.
 
 **Results** (the switch at the top, open at any time) shows what the analysis
 found, without setting anything up first: whether its numbers can be trusted

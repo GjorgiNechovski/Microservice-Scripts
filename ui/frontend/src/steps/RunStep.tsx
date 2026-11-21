@@ -104,6 +104,8 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
   const { status, lines, poll } = useRun(onRunState);
   const specPath = state.savedPath;
   const generated = state.load.script === 'generate';
+  // a sweep measures recovery once, before its load levels; a single run after its load test
+  const sweep = state.load.users.length > 1;
   const needsSecret = generated && usesSecret(state.auth);
 
   const preflight = useQuery({
@@ -153,8 +155,54 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
     await poll();
   };
 
+  const stopButton = active && (
+    <Button
+      size="md"
+      color="red"
+      variant="light"
+      leftSection={<IconPlayerStop size={18} />}
+      disabled={status?.state === 'stopping'}
+      onClick={() => setConfirmStop(true)}
+    >
+      Stop
+    </Button>
+  );
+  const output = status && status.state !== 'idle' && (
+    <RunOutput status={status} lines={lines} estimate={totalMinutes * 60} sweep={sweep} onShowResults={onShowResults} />
+  );
+  const stopModal = (
+    <Modal opened={confirmStop} onClose={() => setConfirmStop(false)} title="Stop the run?">
+      <Stack>
+        <Text size="sm">
+          The analyzer stops at once, starts again anything it had stopped, and removes its load generator. What it
+          measured so far isn't analysed.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => setConfirmStop(false)}>
+            Keep running
+          </Button>
+          <Button color="red" onClick={stop}>
+            Stop
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+
   if (!specPath) {
-    return <Alert color="yellow">Save the spec in the previous step first.</Alert>;
+    // a run that's going stays in view and can be stopped, whatever happened to the setup since
+    return (
+      <Stack gap="lg">
+        <Alert color="yellow">
+          {active
+            ? "A run is going (below). To start another one, save the spec in the previous step: saving into this run's folder waits until it ends."
+            : 'Save the spec in the previous step first.'}
+        </Alert>
+        {stopButton && <Group>{stopButton}</Group>}
+        {output}
+        {stopModal}
+      </Stack>
+    );
   }
 
   return (
@@ -265,18 +313,7 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
         >
           Start
         </Button>
-        {active && (
-          <Button
-            size="md"
-            color="red"
-            variant="light"
-            leftSection={<IconPlayerStop size={18} />}
-            disabled={status?.state === 'stopping'}
-            onClick={() => setConfirmStop(true)}
-          >
-            Stop
-          </Button>
-        )}
+        {stopButton}
         <Text size="sm" c="dimmed">
           About {totalMinutes} minutes
           {faultInjection ? `: ${loadMinutes} for the load test, about ${faultMinutes} for fault injection` : ''}.
@@ -284,13 +321,15 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
       </Group>
       {startError && <Alert color="red">{startError}</Alert>}
 
-      {status && status.state !== 'idle' && (
-        <RunOutput status={status} lines={lines} estimate={totalMinutes * 60} onShowResults={onShowResults} />
-      )}
+      {output}
 
       <Modal opened={confirmFull} onClose={() => setConfirmFull(false)} title="Start the full run?" size="lg">
         <Stack>
-          <Text size="sm">After the load test, these components are stopped and started again, a few times each:</Text>
+          <Text size="sm">
+            {sweep
+              ? 'First, before the load levels, these components are stopped and started again, a few times each:'
+              : 'After the load test, these components are stopped and started again, a few times each:'}
+          </Text>
           <ScrollArea.Autosize mah={260} type="auto">
             <Code block>{preflight.data?.faultPlan ?? '…'}</Code>
           </ScrollArea.Autosize>
@@ -311,22 +350,7 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
         </Stack>
       </Modal>
 
-      <Modal opened={confirmStop} onClose={() => setConfirmStop(false)} title="Stop the run?">
-        <Stack>
-          <Text size="sm">
-            The analyzer stops at once, starts again anything it had stopped, and removes its load generator. What it
-            measured so far isn't analysed.
-          </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setConfirmStop(false)}>
-              Keep running
-            </Button>
-            <Button color="red" onClick={stop}>
-              Stop
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+      {stopModal}
     </Stack>
   );
 }
@@ -353,9 +377,9 @@ function CheckRow({ check }: { check: PreflightCheck }) {
   );
 }
 
-type OutputProps = { status: RunStatus; lines: RunLine[]; estimate: number; onShowResults?: () => void };
+type OutputProps = { status: RunStatus; lines: RunLine[]; estimate: number; sweep: boolean; onShowResults?: () => void };
 
-function RunOutput({ status, lines, estimate, onShowResults }: OutputProps) {
+function RunOutput({ status, lines, estimate, sweep, onShowResults }: OutputProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
   useEffect(() => {
@@ -387,7 +411,7 @@ function RunOutput({ status, lines, estimate, onShowResults }: OutputProps) {
           <Progress value={Math.min(97, (seconds / estimate) * 100)} animated size="sm" />
           <Text size="xs" c="dimmed">
             About {Math.max(1, Math.ceil((estimate - seconds) / 60))} min left
-            {status.faultInjection ? ' (load test, then fault injection)' : ''}. The output stays quiet while k6
+            {status.faultInjection ? (sweep ? ' (fault injection, then the load levels)' : ' (load test, then fault injection)') : ''}. The output stays quiet while k6
             holds a level: that's normal.
           </Text>
         </Stack>

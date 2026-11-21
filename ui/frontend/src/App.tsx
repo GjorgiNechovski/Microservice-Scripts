@@ -20,9 +20,12 @@ import {
   IconCircleCheck,
   IconInfoCircle,
   IconMoon,
+  IconPlayerPlay,
   IconSun,
 } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useState } from 'react';
+import { api } from './api';
 import {
   STEP,
   STEPS,
@@ -50,6 +53,19 @@ export default function App({ hasToken }: { hasToken: boolean }) {
   const [prerequisites, setPrerequisites] = useState<PrerequisiteStatus>('checking');
   const [run, setRun] = useState<RunState>('idle');
   const [state, setStateRaw] = useState<WizardState>(initialState);
+  // the run, wherever the user is: the Run step follows its output, this only its state (a run that ends while
+  // the results are open; one still going after the page was reloaded)
+  const runState = useQuery({
+    queryKey: ['run-state'],
+    // the last line number the backend can take: only the state is wanted, not the output
+    queryFn: () => api.run(2_147_483_647),
+    enabled: hasToken,
+    refetchInterval: (q) => (q.state.data && ['running', 'stopping'].includes(q.state.data.state) ? 3000 : 15000),
+  });
+  useEffect(() => {
+    if (runState.data?.state) setRun(runState.data.state);
+  }, [runState.data]);
+  const running = run === 'running' || run === 'stopping';
   // any change to what was saved means saving again
   const setState = useCallback(
     (update: (s: WizardState) => WizardState) => setStateRaw((s) => settle(s, update(s))),
@@ -84,6 +100,11 @@ export default function App({ hasToken }: { hasToken: boolean }) {
             <Text c="dimmed">setup</Text>
           </Group>
           <Group gap="sm">
+            {hasToken && running && (page === 'results' || active !== STEP.run) && (
+              <Button color="orange" variant="light" leftSection={<IconPlayerPlay size={16} />} onClick={() => go(STEP.run)}>
+                A run is going
+              </Button>
+            )}
             {hasToken && (
               <SegmentedControl
                 value={page}
