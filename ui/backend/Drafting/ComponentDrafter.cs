@@ -79,7 +79,8 @@ public sealed class ComponentDrafter(
     private static readonly HashSet<string> JobWords =
     [
         "migrate", "migration", "migrations", "migrator", "seed", "seeder", "seeding", "init", "setup",
-        "bootstrap", "provision", "provisioner", "flyway", "liquibase",
+        "bootstrap", "provision", "provisioner", "flyway", "liquibase", "initiator", "initializer", "initialiser",
+        "initdb", "dbinit",
     ];
 
     private static readonly HashSet<string> FrontendWords =
@@ -172,6 +173,26 @@ public sealed class ComponentDrafter(
             notes);
     }
 
+    /// <summary>
+    /// Started to do one thing and exit: a restart policy that doesn't keep it
+    /// running (an explicit "no", or "on-failure"; Compose's default is also "no",
+    /// so an unset policy doesn't count), no ports, and a shell or a script instead
+    /// of the image's own server (`bash /init.sh`). A database tuned with its own
+    /// command (`postgres -c max_connections=200`) is still the database.
+    /// </summary>
+    private static bool RunsOnce(ComposeService service) =>
+        service.Restart is { } restart
+        && (restart == "no" || restart.StartsWith("on-failure", StringComparison.Ordinal))
+        && service.PortTargets.Count == 0 && service.Expose.Count == 0
+        && RunsAScript(service.Entrypoint.Count > 0 ? service.Entrypoint : service.Command);
+
+    private static readonly HashSet<string> Shells = ["sh", "bash", "ash", "dash", "zsh"];
+
+    /// <summary>The first word is a shell (`bash`, `/bin/sh`) or a script (`/init.sh`).</summary>
+    private static bool RunsAScript(IReadOnlyList<string> words) =>
+        words.Count > 0 && words[0].Trim() is var first && first.Length > 0
+        && (Shells.Contains(first.Split('/')[^1]) || first.EndsWith(".sh", StringComparison.OrdinalIgnoreCase));
+
     private Work Classify(ComposeProject project, ComposeService service, IReadOnlySet<string> imagesWithHealthcheck)
     {
         var w = new Work(project, service);
@@ -188,6 +209,14 @@ public sealed class ComponentDrafter(
         {
             w.Kind = ComponentKind.NotModelled;
             w.Reasons.Add("looks like a one-off job (its name)");
+        }
+        else if (imageMatch is { NotModelled: false } && RunsOnce(service))
+        {
+            // a database's image started only to set the database up (create a replica set, a schema)
+            w.Kind = ComponentKind.NotModelled;
+            w.Reasons.Add($"runs the {imageMatch.Label} image with its own "
+                          + (service.Entrypoint.Count > 0 ? "entrypoint" : "command")
+                          + $", restart: {service.Restart} and no ports: a one-off job, such as setting it up");
         }
         else if (imageMatch is not null)
         {

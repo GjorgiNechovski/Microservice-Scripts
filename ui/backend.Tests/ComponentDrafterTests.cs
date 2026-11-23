@@ -151,6 +151,31 @@ public class ComponentDrafterTests
         ComposeProject.Parse(json, $"/projects/{name}", [$"/projects/{name}/compose.yaml"]);
 
     [Fact]
+    public void A_database_image_run_once_with_its_own_script_is_a_job_not_the_database()
+    {
+        // a replica-set initiator borrows the database's image; the database itself also runs a script
+        var draft = Fixtures.Draft(Inline("games", """
+            {
+              "name": "games",
+              "services": {
+                "mongo": { "image": "mongo:8", "restart": "always", "entrypoint": ["bash", "/start.sh"],
+                           "ports": [ { "target": 27017, "published": "27017" } ] },
+                "mongo-rs-initiator": { "image": "mongo:8", "restart": "no", "entrypoint": ["bash", "/init.sh"],
+                                        "depends_on": { "mongo": { "condition": "service_started" } } },
+                "cache": { "image": "redis:8", "command": ["redis-server", "--appendonly", "yes"] },
+                "db": { "image": "postgres:17", "restart": "no", "command": ["postgres", "-c", "max_connections=200"] }
+              }
+            }
+            """));
+
+        // a database tuned with its own command, even unpublished and never restarted, is the database
+        Assert.Equal(["cache", "db", "mongo"], Names(draft, ComponentKind.Infrastructure));
+        var job = Get(draft, "mongo-rs-initiator");
+        Assert.Equal(ComponentKind.NotModelled, job.Kind);
+        Assert.Contains(job.Reasons, r => r.Contains("one-off job", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void A_service_calling_one_in_another_project_depends_on_it()
     {
         var auth = Inline("shop-auth", """

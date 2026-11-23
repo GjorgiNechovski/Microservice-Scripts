@@ -46,7 +46,9 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    name, over the shared network, depends on it.
 3. **Components.** Every compose service is sorted into *service*,
    *infrastructure*, *not modelled* (frontends, admin UIs, monitoring, one-off
-   jobs) or *unsure*, with the reason shown. Replicas (`db` and `db-2`) and
+   jobs, including one that borrows a database's image to set it up: a shell or
+   a script instead of the database itself, `restart: "no"` and no ports) or
+   *unsure*, with the reason shown. Replicas (`db` and `db-2`) and
    poolers or load balancers in front of a single component fold into it. A copy
    told apart only by a number (`db-1`, `db-2`) whose settings don't name the
    others (as `REPMGR_PARTNER_NODES` or `RABBITMQ_SEED_NODE` do in a cluster) may
