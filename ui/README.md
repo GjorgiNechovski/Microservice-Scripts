@@ -67,7 +67,10 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    by the service that handles them, with the address they are reached at from
    this machine: through which gateways, under which prefix. Reading routes are
    picked to begin with; one that changes data, checks health or needs a value
-   for a `{parameter}` waits for you, with the reason. Each route belongs to a
+   for a `{parameter}` it has no example for waits for you, with the reason. A
+   read whose `{parameter}` got an example value from the code (`string`, `1`)
+   is picked so that **Try** shows at once whether it works: put in a value
+   that exists in your data, or untick it. Each route belongs to a
    **feature** (the spec's operations); give two routes the same feature name to
    make them one. **Authorization** works like Postman's tab of that name: *no
    auth*, a *bearer token* or *API key* you already have, or *log in first*. For
