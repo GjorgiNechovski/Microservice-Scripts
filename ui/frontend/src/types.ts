@@ -7,6 +7,8 @@ export type PrerequisiteCheck = {
   ok: boolean;
   detail: string;
   fix: string | null;
+  /** Not needed to draft the spec, only to start the app and the run (a stopped Docker engine). */
+  later?: boolean;
 };
 
 export type FolderListing = {

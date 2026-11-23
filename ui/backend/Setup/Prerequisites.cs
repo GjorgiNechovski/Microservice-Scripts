@@ -2,10 +2,11 @@ using MicroserviceScripts.Ui.Infrastructure;
 
 namespace MicroserviceScripts.Ui.Setup;
 
-/// <param name="Required">False for something that only adds extras (figures).</param>
+/// <param name="Required">False for something that only adds extras (figures), or is needed only later.</param>
 /// <param name="Fix">What to do about it, when not ok.</param>
+/// <param name="Later">Not needed to draft the spec, only to start the app and the run (a stopped Docker engine).</param>
 public sealed record PrerequisiteCheck(
-    string Id, string Label, bool Required, bool Ok, string Detail, string? Fix);
+    string Id, string Label, bool Required, bool Ok, string Detail, string? Fix, bool Later = false);
 
 /// <summary>What the analyzer needs on this machine, checked before anything else.</summary>
 public sealed class Prerequisites(IProcessRunner runner, PythonLocator python, RepoLocation repo)
@@ -30,10 +31,13 @@ public sealed class Prerequisites(IProcessRunner runner, PythonLocator python, R
         {
             docker.Ok
                 ? new("docker", "Docker", true, true, $"Docker Engine {docker.StdOut.Trim()}", null)
-                : new("docker", "Docker", true, false, FirstLine(docker.Error),
-                    docker.NotFound
-                        ? "Install Docker: https://docs.docker.com/get-docker/"
-                        : "Start Docker: the engine isn't answering."),
+                : docker.NotFound
+                    ? new("docker", "Docker", true, false, FirstLine(docker.Error),
+                        "Install Docker: https://docs.docker.com/get-docker/")
+                    // drafting reads only files (Compose reads them without the engine): go on, start it later
+                    : new("docker", "Docker", false, false, FirstLine(docker.Error),
+                        "Start Docker before you start your app or the run. Drafting the spec only reads files, so "
+                        + "you can go on now; healthchecks built into images are seen once it answers.", Later: true),
             compose.Ok
                 ? new("compose", "Docker Compose v2", true, true, $"Compose {compose.StdOut.Trim()}", null)
                 : new("compose", "Docker Compose v2", true, false, FirstLine(compose.Error),

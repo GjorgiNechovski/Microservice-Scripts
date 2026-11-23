@@ -37,7 +37,7 @@ export function PrerequisitesStep({ onStatus }: Props) {
                   {!check.required && (
                     <Text span size="sm" c="dimmed">
                       {' '}
-                      (optional)
+                      {check.later ? '(needed later: to start your app and the run)' : '(optional)'}
                     </Text>
                   )}
                 </Text>

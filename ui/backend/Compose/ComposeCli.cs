@@ -67,12 +67,21 @@ public sealed class ComposeCli(IProcessRunner runner)
     }
 
     /// <summary>Compose projects on this machine, running or stopped, with their files.</summary>
-    public async Task<IReadOnlyList<RunningProject>> ListAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<RunningProject>> ListAsync(CancellationToken cancellationToken) =>
+        await TryListAsync(cancellationToken) ?? [];
+
+    /// <summary>As <see cref="ListAsync"/>, but null when Docker didn't answer (its engine is down), not "none".</summary>
+    public async Task<IReadOnlyList<RunningProject>?> TryListAsync(CancellationToken cancellationToken)
     {
         var result = await runner.RunAsync(
             "docker", ["compose", "ls", "--all", "--format", "json"], timeout: Timeout,
             cancellationToken: cancellationToken);
-        if (!result.Ok || string.IsNullOrWhiteSpace(result.StdOut))
+        if (!result.Ok)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(result.StdOut))
         {
             return [];
         }

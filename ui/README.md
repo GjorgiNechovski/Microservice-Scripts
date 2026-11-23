@@ -27,7 +27,11 @@ the key the page can't do anything. Stop the app with Ctrl+C.
 
 ## What it does
 
-1. **Check** that Docker, Compose, Python and the analyzer are there.
+1. **Check** that Docker, Compose, Python and the analyzer are there. A Docker
+   engine that isn't running yet doesn't stop you: drafting the spec only reads
+   files (Compose reads them without the engine), and starting your app or the
+   run checks again. Only the list of compose projects Docker knows needs it,
+   and says so.
 2. **Project.** Add the folder of each repository your app's services live in,
    or one folder that holds them all. Only those folders are searched for compose
    files, skipping `node_modules`, `.git`, build output and the like. You can

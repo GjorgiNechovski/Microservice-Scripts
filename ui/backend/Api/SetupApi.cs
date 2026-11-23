@@ -76,7 +76,15 @@ public static class SetupApi
         api.MapPost("/scan", (ScanRequest request) =>
             FolderScanner.Scan(request.Folders, request.ExtraFiles, request.KnownProjects));
 
-        api.MapGet("/compose/projects", (ComposeCli compose, CancellationToken ct) => compose.ListAsync(ct));
+        // the engine may be down: drafting goes on without it, but its list of projects can't be had
+        api.MapGet("/compose/projects", async (ComposeCli compose, CancellationToken ct) =>
+            await compose.TryListAsync(ct) is { } projects
+                ? Results.Ok(projects)
+                : Results.Json(new
+                {
+                    error = "Docker isn't answering, so the projects it knows can't be listed. Start Docker, "
+                            + "or add your app's folder instead.",
+                }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
         api.MapPost("/draft", Draft);
 

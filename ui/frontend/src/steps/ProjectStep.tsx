@@ -142,6 +142,11 @@ export function ProjectStep({ state, setState }: Props) {
               doesn't know an app that has never been started. For one of those, add its folder.
             </Text>
             {running.isPending && <Loader size="sm" />}
+            {running.isError && (
+              <Text size="sm" c="orange">
+                {running.error.message}
+              </Text>
+            )}
             {running.data?.length === 0 && (
               <Text size="sm">None yet: no compose project has been started on this machine. Add your app's folder.</Text>
             )}
