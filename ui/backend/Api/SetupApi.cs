@@ -88,14 +88,14 @@ public static class SetupApi
 
         api.MapPost("/draft", Draft);
 
-        api.MapPost("/spec/preview", (PreviewRequest request) =>
+        api.MapPost("/spec/preview", async (PreviewRequest request, ComposeCli compose, CancellationToken ct) =>
         {
             var problems = request.Spec.Problems().Concat(request.Script?.Problems() ?? []).ToList();
             return problems.Count > 0
                 ? Results.UnprocessableEntity(new { problems })
                 : Results.Ok(new
                 {
-                    toml = TomlSpecWriter.Write(request.Spec),
+                    toml = TomlSpecWriter.Write(request.Spec, dockerDesktop: await compose.EngineInVmAsync(ct)),
                     script = request.Script is null ? null : K6ScriptWriter.Write(request.Script, request.Spec.Name),
                 });
         });
@@ -295,7 +295,8 @@ public static class SetupApi
         return Results.Ok(new DraftResponse(results, draft, routeDrafter.Draft(projects, draft)));
     }
 
-    private static async Task<IResult> Save(SaveRequest request, SpecChecker checker, RunManager runs, CancellationToken ct)
+    private static async Task<IResult> Save(
+        SaveRequest request, SpecChecker checker, RunManager runs, ComposeCli compose, CancellationToken ct)
     {
         var problems = request.Spec.Problems().Concat(request.Script?.Problems() ?? []).ToList();
         if (problems.Count > 0)
@@ -362,7 +363,7 @@ public static class SetupApi
             return Results.Conflict(new { exists = true, path = existing[0], paths = existing });
         }
 
-        var toml = TomlSpecWriter.Write(spec);
+        var toml = TomlSpecWriter.Write(spec, dockerDesktop: await compose.EngineInVmAsync(ct));
         var check = await checker.CheckAsync(toml, ct);
         if (!check.Ok)
         {

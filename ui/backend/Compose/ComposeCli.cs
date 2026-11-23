@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MicroserviceScripts.Ui.Infrastructure;
 
 namespace MicroserviceScripts.Ui.Compose;
@@ -16,6 +17,53 @@ public sealed record RunningProject(string Name, string Status, IReadOnlyList<st
 public sealed class ComposeCli(IProcessRunner runner)
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Products that run Docker in a VM, as `docker info` names its operating system.</summary>
+    private static readonly string[] VmProducts = ["docker desktop", "orbstack", "rancher desktop"];
+
+    /// <summary>The whole host name of a Docker VM (Colima's, Lima's): never a part of a name, "climate-lab" isn't one.</summary>
+    private static readonly Regex VmHost = new(
+        @"^(?:docker-desktop|orbstack|rancher-desktop|colima(?:-[\w.-]+)?|lima-[\w.-]+)$", RegexOptions.IgnoreCase);
+
+    private bool? inVm;
+
+    /// <summary>
+    /// Whether the Docker engine runs in a VM (Docker Desktop on any system, Colima,
+    /// OrbStack...), so a container on the host network can't reach this machine's
+    /// localhost: asked from `docker info`, remembered once it answers. Null when it
+    /// doesn't (the engine is down), for the caller to guess. See <see cref="InVm"/>.
+    /// </summary>
+    public async Task<bool?> EngineInVmAsync(CancellationToken cancellationToken)
+    {
+        if (inVm is { } known)
+        {
+            return known;
+        }
+
+        var result = await runner.RunAsync(
+            "docker", ["info", "--format", "{{.OperatingSystem}}|{{.Name}}"], timeout: TimeSpan.FromSeconds(20),
+            cancellationToken: cancellationToken);
+        if (!result.Ok || string.IsNullOrWhiteSpace(result.StdOut))
+        {
+            return null;
+        }
+
+        return inVm = InVm(result.StdOut, OperatingSystem.IsLinux());
+    }
+
+    /// <summary>
+    /// From `docker info`'s "operating system|host name": a VM when the product says so
+    /// (Docker Desktop, OrbStack, Rancher Desktop) or the host is a known VM's. Otherwise
+    /// Docker on Linux runs on this machine, and anywhere else always in a VM: wrongly
+    /// calling Linux's Docker a VM would send k6 to host.docker.internal, which it lacks.
+    /// </summary>
+    public static bool InVm(string described, bool linux)
+    {
+        var parts = described.Trim().Split('|', 2);
+        var system = parts[0].Trim().ToLowerInvariant();
+        var host = parts.Length > 1 ? parts[1].Trim() : "";
+        return VmProducts.Any(system.Contains) || VmHost.IsMatch(host) || !linux;
+    }
 
     /// <summary>
     /// Reads a project the way Compose itself does. The error, when there is one,

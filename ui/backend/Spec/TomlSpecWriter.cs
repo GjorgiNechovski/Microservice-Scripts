@@ -14,9 +14,10 @@ public static class TomlSpecWriter
     private static readonly Regex BareKey = new(@"^[A-Za-z0-9_-]+$");
 
     /// <param name="dockerDesktop">
-    /// Docker runs in a VM (Docker Desktop on Windows and macOS): k6's container
-    /// can't share this machine's network, so it reaches the app through
-    /// host.docker.internal instead of localhost. The default is this machine's.
+    /// Docker runs in a VM (Docker Desktop, Colima...; ComposeCli.EngineInVmAsync asks
+    /// `docker info`): k6's container can't share this machine's network, so it reaches
+    /// the app through host.docker.internal instead of localhost. Unknown (null): guessed
+    /// from this machine, a VM everywhere but Linux.
     /// </param>
     public static string Write(SpecDocument spec, DateTime? writtenAt = null, bool? dockerDesktop = null)
     {

@@ -100,9 +100,10 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    relative one is refused). Saving over an existing file keeps the old one as a
    dated `.bak` file, never over an earlier backup. While a run is going, its
    folder can't be saved into: a sweep reads its load script again at every
-   level. On Windows and macOS (Docker Desktop) the spec runs k6 on Docker's own
-   network and sends it to `host.docker.internal`, since k6's container can't
-   use this machine's network there.
+   level. When Docker runs in a VM (Docker Desktop on any system, OrbStack,
+   Colima, Rancher Desktop, as `docker info` says; always off Linux), the spec
+   runs k6 on Docker's own network and sends it to `host.docker.internal`, since
+   k6's container can't use this machine's network there.
 8. **Run.** Your app's status again, and the **monitoring stack** the
    measurements come from (Prometheus, the OpenTelemetry collector, cAdvisor in
    `observability/`). If it isn't running, its settings are filled in from what

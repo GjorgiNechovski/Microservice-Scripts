@@ -163,6 +163,17 @@ public class LoadTests
         Assert.True(check is null || check.Ok, check?.Error);
     }
 
+    [Theory]
+    [InlineData("Docker Desktop|docker-desktop", true, true)]            // Docker Desktop for Linux too
+    [InlineData("OrbStack|orbstack", false, true)]
+    [InlineData("Ubuntu 24.04.1 LTS|colima", false, true)]
+    [InlineData("Alpine Linux v3.20|lima-rancher-desktop", false, true)]
+    [InlineData("Ubuntu 24.04.1 LTS|climate-lab", true, false)]           // a host merely containing "lima"
+    [InlineData("Fedora Linux 44 (KDE Plasma)|wpops-laptop", true, false)]
+    [InlineData("Some engine|some-host", false, true)]                    // off Linux, Docker always runs in a VM
+    public void Docker_in_a_VM_is_told_from_docker_info(string described, bool linux, bool expected) =>
+        Assert.Equal(expected, MicroserviceScripts.Ui.Compose.ComposeCli.InVm(described, linux));
+
     [Fact]
     public async Task On_Docker_Desktop_k6_reaches_the_app_through_the_host()
     {
