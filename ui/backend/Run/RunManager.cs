@@ -41,10 +41,13 @@ public sealed record StartRequest(string SpecPath, bool FaultInjection, IReadOnl
 /// <summary>
 /// Runs the analyzer's whole pipeline (<c>python3 -m analyzer</c>) for a saved
 /// spec, one run at a time, keeping its output for the page to follow.
-/// Stopping it asks the analyzer to stop (Ctrl+C), which puts back a
-/// container it stopped and removes its k6 container; afterwards anything the
-/// app's projects had running when the run started is started again, in case
-/// the analyzer couldn't.
+/// Stopping it asks the analyzer to stop as Ctrl+C does (SIGINT; on Windows,
+/// where a console-less child can't get Ctrl+C, a "stop" line on its standard
+/// input: analyzer.stop_signal), which puts back a container it stopped and
+/// removes its k6 container; afterwards anything the app's projects had
+/// running when the run started is started again, in case the analyzer couldn't.
+/// The analyzer also stops itself when its standard input closes, so a run
+/// doesn't go on without the app that started it.
 /// </summary>
 public sealed class RunManager(PythonLocator python, IProcessRunner runner, RepoLocation repo)
 {
@@ -64,10 +67,26 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
     private int? exitCode;
     private IReadOnlyList<string> projects = [];
     private IReadOnlyList<string> runningBefore = [];
+    private IReadOnlyDictionary<string, string> finishedBefore = new Dictionary<string, string>();
     private string runId = "";
 
     /// <summary>The analyzer names its k6 containers after this (analyzer.collect.loadgen).</summary>
     public const string RunIdVariable = "MICROSERVICE_SCRIPTS_RUN_ID";
+
+    /// <summary>Makes the analyzer watch its standard input for "stop" (analyzer.stop_signal).</summary>
+    public const string StopOnStdinVariable = "MICROSERVICE_SCRIPTS_STOP_ON_STDIN";
+
+    /// <summary>Whether a run is going (or stopping): the app and the monitoring stack aren't started under it.</summary>
+    public bool Busy
+    {
+        get
+        {
+            lock (gate)
+            {
+                return state is RunState.Running or RunState.Stopping;
+            }
+        }
+    }
 
     /// <summary>
     /// The folder of the spec a run is using, while it runs: its spec and load
@@ -116,7 +135,7 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
 
         var py = await python.FindAsync(ct);
-        if (py is null)
+        if (py is null || py.Version < PythonLocator.Minimum)
         {
             return "Python 3.11 or newer wasn't found.";
         }
@@ -140,6 +159,7 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
 
         var before = await RunningContainersAsync(found, ct);
+        var finished = await FinishedAtAsync(before, ct);
         var output = Path.Combine(Path.GetDirectoryName(spec)!, "analysis");
         var arguments = new List<string> { "-u", "-m", "analyzer", spec, "--out", output };
         if (!request.FaultInjection)
@@ -150,6 +170,8 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         var info = new ProcessStartInfo(py.FileName)
         {
             WorkingDirectory = repo.Root,
+            // kept open for the whole run: "stop" goes there, and its end stops the run too
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -166,6 +188,7 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         // its k6 containers are found by this, not by the pid: a launcher (py -3) runs Python under another one
         var id = Guid.NewGuid().ToString("N")[..12];
         info.Environment[RunIdVariable] = id;
+        info.Environment[StopOnStdinVariable] = "1";
         foreach (var (name, value) in request.Secrets ?? new Dictionary<string, string>())
         {
             // only the variables the generated script reads: nothing else of the environment is settable from the page
@@ -197,11 +220,11 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
             exitCode = null;
             projects = found;
             runningBefore = before;
+            finishedBefore = finished;
             runId = id;
             process = started;
             state = RunState.Running;
-            Append($"[setup app] python3 -m analyzer {spec} --out {output}"
-                   + (request.FaultInjection ? "" : " --skip-chaos"), error: false);
+            Append($"[setup app] {string.Join(' ', [py.FileName, .. py.Arguments([.. arguments])])}", error: false);
         }
 
         try
@@ -242,14 +265,28 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
             Append("[setup app] stopping: the analyzer puts back anything it stopped and removes its load generator…", error: false);
         }
 
-        if (!OperatingSystem.IsWindows())
+        // either way the analyzer's own clean-up runs (restart a killed container, remove k6)
+        if (OperatingSystem.IsWindows())
         {
-            // Ctrl+C: the analyzer's own clean-up runs (restart a killed container, remove k6)
+            // a child without a console of its own can't be sent Ctrl+C on Windows: it watches its
+            // standard input for this instead (analyzer.stop_signal)
+            try
+            {
+                await target.StandardInput.WriteLineAsync("stop");
+                await target.StandardInput.FlushAsync();
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
+            {
+                // it ended in the meantime
+            }
+        }
+        else
+        {
             await runner.RunAsync("kill", ["-INT", target.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)],
                 timeout: TimeSpan.FromSeconds(10));
         }
 
-        using var wait = new CancellationTokenSource(OperatingSystem.IsWindows() ? TimeSpan.Zero : GracePeriod);
+        using var wait = new CancellationTokenSource(GracePeriod);
         try
         {
             await target.WaitForExitAsync(wait.Token);
@@ -325,10 +362,12 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
 
         IReadOnlyList<string> before, wanted;
+        IReadOnlyDictionary<string, string> finished;
         DateTimeOffset since;
         lock (gate)
         {
             before = runningBefore;
+            finished = finishedBefore;
             wanted = projects;
             since = startedAt ?? DateTimeOffset.MinValue;
         }
@@ -339,7 +378,10 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
             var shortId = container[..Math.Min(12, container.Length)];
             var state = await runner.RunAsync("docker",
                 ["inspect", "--format", "{{.State.ExitCode}} {{.State.FinishedAt}}", container], timeout: TimeSpan.FromSeconds(20));
-            if (!KilledSince(state.StdOut, since))
+            var killed = finished.TryGetValue(container, out var finishedAtStart)
+                ? KilledDuringRun(state.StdOut, finishedAtStart)
+                : KilledSince(state.StdOut, since);
+            if (!killed)
             {
                 Add($"[setup app] left container {shortId} as it is: it stopped on its own, not killed by the run", error: false);
                 continue;
@@ -353,7 +395,50 @@ public sealed class RunManager(PythonLocator python, IProcessRunner runner, Repo
         }
     }
 
-    /// <summary>Whether `docker inspect`'s "exit-code finished-at" says it was killed (137) after <paramref name="since"/>.</summary>
+    /// <summary>
+    /// Whether `docker inspect`'s "exit-code finished-at" says the container was killed (137)
+    /// during the run: its FinishedAt is no longer the one it had when the run began. Docker's
+    /// clock is only compared with itself, so a host clock that drifted from it (Docker
+    /// Desktop's VM after the machine slept) can't make a killed container look old.
+    /// </summary>
+    public static bool KilledDuringRun(string inspected, string finishedAtStart)
+    {
+        var parts = inspected.Trim().Split(' ', 2);
+        return parts.Length == 2 && parts[0] == "137" && parts[1].Trim() != finishedAtStart.Trim();
+    }
+
+    /// <summary>
+    /// Each container's FinishedAt (when it last stopped, or Docker's zero time) by id, for
+    /// <see cref="KilledDuringRun"/>; containers that couldn't be inspected are missing.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> FinishedAtAsync(
+        IReadOnlyList<string> containers, CancellationToken ct)
+    {
+        var found = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (containers.Count == 0)
+        {
+            return found;
+        }
+
+        var inspected = await runner.RunAsync("docker",
+            ["inspect", "--format", "{{.Id}} {{.State.FinishedAt}}", .. containers],
+            timeout: TimeSpan.FromSeconds(20), cancellationToken: ct);
+        foreach (var line in Ids(inspected.StdOut))
+        {
+            var parts = line.Split(' ', 2);
+            if (parts.Length == 2)
+            {
+                found[parts[0]] = parts[1].Trim();
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Whether `docker inspect`'s "exit-code finished-at" says it was killed (137) after <paramref name="since"/>:
+    /// the fallback for a container whose FinishedAt couldn't be read when the run began.
+    /// </summary>
     public static bool KilledSince(string inspected, DateTimeOffset since)
     {
         var parts = inspected.Trim().Split(' ', 2);

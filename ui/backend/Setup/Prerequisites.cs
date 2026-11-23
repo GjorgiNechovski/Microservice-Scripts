@@ -52,7 +52,7 @@ public sealed class Prerequisites(IProcessRunner runner, PythonLocator python, R
         {
             checks.Add(new("python", "Python 3.11 or newer", true, false,
                 $"Python {py.Version} (`{py.FileName}`)",
-                "Install Python 3.11 or newer: the analyzer needs its tomllib."));
+                "Install Python 3.11 or newer (the analyzer needs its tomllib), or set MS_PYTHON to one you have."));
             return checks;
         }
 

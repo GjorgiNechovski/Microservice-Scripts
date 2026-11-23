@@ -685,6 +685,9 @@ def main(argv=None) -> int:
 
     utf8_stdio()
     loadgen.load_dotenv()
+    # the setup app's Stop, where it can't send Ctrl+C (Windows): see stop_signal
+    from analyzer import stop_signal
+    stop_signal.watch_stdin()
 
     parser = argparse.ArgumentParser(
         prog="python3 -m analyzer",

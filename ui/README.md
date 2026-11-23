@@ -114,10 +114,15 @@ the key the page can't do anything. Stop the app with Ctrl+C.
    stops your app's containers for a moment, Start shows the analyzer's own
    plan of what it stops and asks once. *The load test only* skips it, leaving
    the availability figures unmeasured. The output follows live. **Stop** asks
-   the analyzer to stop (Ctrl+C): it starts again a container it had stopped
-   and removes its k6 container; afterwards the app also starts again any of your
-   app's containers that was running when the run began and was killed since (a
-   job that finished, or a container stopped another way, is left alone). The run
+   the analyzer to stop as Ctrl+C does (on Windows, where a program can't send
+   Ctrl+C to one it started, through its standard input:
+   `analyzer/stop_signal.py`): it starts again a container it had stopped and
+   removes its k6 container; afterwards the app also starts again any of your
+   app's containers that was running when the run began and was killed since,
+   judged by Docker's own clock (a job that finished, or a container stopped
+   another way, is left alone). If the app itself goes away mid-run, the analyzer
+   stops the same way. While a run is going, the app and the monitoring stack
+   can't be started from here. The run
    stays in view, with Stop, even after the page was reloaded (**A run is going**
    at the top leads to it). In a sweep, fault injection comes first, before the
    load levels; in a single run, after the load test. The reports land in

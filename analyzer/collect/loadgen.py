@@ -217,13 +217,18 @@ RUN_ID_VARIABLE = "MICROSERVICE_SCRIPTS_RUN_ID"
 _NAME_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
-def container_name(environ=None) -> str:
-    """A unique name for one k6 container: microservice-scripts-k6-<run>-<ns>."""
+def container_prefix(environ=None) -> str:
+    """What every k6 container of this run is named with: microservice-scripts-k6-<run>-."""
     environ = os.environ if environ is None else environ
     run = environ.get(RUN_ID_VARIABLE, "")
     if not _NAME_PART.fullmatch(run):
         run = str(os.getpid())
-    return f"microservice-scripts-k6-{run}-{time.time_ns()}"
+    return f"microservice-scripts-k6-{run}-"
+
+
+def container_name(environ=None) -> str:
+    """A unique name for one k6 container: microservice-scripts-k6-<run>-<ns>."""
+    return f"{container_prefix(environ)}{time.time_ns()}"
 
 
 def load_timeout(cfg: dict, floor: float = 1800.0) -> float:

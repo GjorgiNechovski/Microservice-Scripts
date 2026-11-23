@@ -120,10 +120,16 @@ public static class SetupApi
                 request.Projects.Select(p => (new ProjectSelection(p.Directory, p.Files, p.Name), p.ComposeName)).ToList(),
                 request.BaseUrl, ct));
 
-        api.MapPost("/app/start", (AppRequest request, AppStarter starter) =>
-            starter.Start(request.Projects.Select(p => new ProjectSelection(p.Directory, p.Files, p.Name)).ToList()) is { } error
-                ? Results.UnprocessableEntity(new { problems = new[] { error } })
-                : Results.Ok(starter.Status(0)));
+        // `docker compose up -d` mid-run would start a container fault injection just stopped,
+        // and the recovery it measures would be this app's, not the system's
+        const string RunGoing = "A run is going: stop it or wait for it to end before starting this.";
+
+        api.MapPost("/app/start", (AppRequest request, AppStarter starter, RunManager runs) =>
+            runs.Busy
+                ? Results.UnprocessableEntity(new { problems = new[] { RunGoing } })
+                : starter.Start(request.Projects.Select(p => new ProjectSelection(p.Directory, p.Files, p.Name)).ToList()) is { } error
+                    ? Results.UnprocessableEntity(new { problems = new[] { error } })
+                    : Results.Ok(starter.Status(0)));
 
         api.MapGet("/app/start", (int? after, AppStarter starter) => starter.Status(after ?? 0));
 
@@ -137,8 +143,14 @@ public static class SetupApi
             problems = monitoring.Problems(settings),
         }));
 
-        api.MapPost("/monitoring/start", (MonitoringSettings settings, Monitoring monitoring, MonitoringStarter starter) =>
+        api.MapPost("/monitoring/start", (MonitoringSettings settings, Monitoring monitoring, MonitoringStarter starter,
+            RunManager runs) =>
         {
+            if (runs.Busy)
+            {
+                return Results.UnprocessableEntity(new { problems = new[] { RunGoing } });
+            }
+
             var problems = monitoring.Problems(settings);
             if (problems.Count > 0)
             {
@@ -322,8 +334,13 @@ public static class SetupApi
         }
 
         // a running sweep reads its load script again at every level: changing it mid-run mixes two tests
-        if (runs.BusyFolder() is { } busy && string.Equals(Path.GetFullPath(Path.GetDirectoryName(path)!),
-                Path.GetFullPath(busy), StringComparison.Ordinal))
+        // C:\x\perf and c:\X\perf are one folder on Windows and (by default) macOS
+        var sameFolder = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (runs.BusyFolder() is { } busy && string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetDirectoryName(path)!)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(busy)), sameFolder))
         {
             return Results.UnprocessableEntity(new
             {

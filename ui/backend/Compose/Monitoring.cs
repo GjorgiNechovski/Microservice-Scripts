@@ -151,6 +151,19 @@ public sealed class Monitoring(RepoLocation repo, IProcessRunner runner, HttpCli
             problems.Add($"There's no folder {settings.ScrapeDir} (it is read from observability/).");
         }
 
+        // each value is one line of the .env: a line break in one would add settings of its own
+        foreach (var (name, value) in new[]
+                 {
+                     ("The Honeycomb key", settings.HoneycombKey), ("The scrape folder", settings.ScrapeDir),
+                     ("The service namespace", settings.Namespace),
+                 })
+        {
+            if (value is not null && value.IndexOfAny(['\r', '\n']) >= 0)
+            {
+                problems.Add($"{name} can't span lines.");
+            }
+        }
+
         return problems;
     }
 

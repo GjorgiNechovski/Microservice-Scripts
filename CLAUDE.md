@@ -400,7 +400,11 @@ a wrong URL fails every request at any load.
   option should be settable there, `ui/backend/Spec/` writes it. It reads
   `python3 -m analyzer.spec --json` and `analyzer.collect --discover --json`, and
   relies on the pipeline cleaning up on Ctrl+C (the k6 container is removed, a
-  container fault injection stopped is started again): keep those working. It
+  container fault injection stopped is started again): keep those working. On
+  Windows its Stop is a `stop` line on the analyzer's standard input
+  (`MICROSERVICE_SCRIPTS_STOP_ON_STDIN=1`, `analyzer/stop_signal.py`), which also
+  stops a run whose app went away: never read standard input elsewhere in the
+  pipeline. It
   finds the run's k6 containers by `MICROSERVICE_SCRIPTS_RUN_ID` (in their name,
   `analyzer.collect.loadgen.container_name`), and reads `load_error` from
   `analyzer.spec --json` to catch a missing load script before a run.

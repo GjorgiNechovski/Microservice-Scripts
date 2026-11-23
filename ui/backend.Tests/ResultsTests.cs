@@ -207,4 +207,17 @@ public sealed class ResultsTests : IDisposable
         var started = new DateTimeOffset(2026, 11, 21, 10, 0, 0, TimeSpan.Zero);
         Assert.Equal(expected, RunManager.KilledSince(inspected, started));
     }
+
+    [Theory]
+    // Docker's clock is hours behind this machine's (its VM slept): still seen as killed by the run
+    [InlineData("137 2026-11-21T07:05:00.123456789Z", "0001-01-01T00:00:00Z", true)]
+    [InlineData("137 2026-11-20T18:00:00Z", "2026-11-20T17:00:00Z", true)]
+    // killed before the run began, and not since
+    [InlineData("137 2026-11-20T17:00:00Z", "2026-11-20T17:00:00Z", false)]
+    // a job that finished on its own during the run
+    [InlineData("0 2026-11-21T10:05:00Z", "0001-01-01T00:00:00Z", false)]
+    [InlineData("", "0001-01-01T00:00:00Z", false)]
+    public void Killed_during_the_run_compares_Dockers_clock_only_with_itself(
+        string inspected, string finishedAtStart, bool expected) =>
+        Assert.Equal(expected, RunManager.KilledDuringRun(inspected, finishedAtStart));
 }

@@ -15,9 +15,9 @@ public sealed class SpecChecker(IProcessRunner runner, PythonLocator python, Rep
     public async Task<SpecCheck> CheckAsync(string toml, CancellationToken cancellationToken)
     {
         var py = await python.FindAsync(cancellationToken);
-        if (py is null)
+        if (py is null || py.Version < PythonLocator.Minimum)
         {
-            return new SpecCheck(false, "Python wasn't found, so the spec couldn't be checked.");
+            return new SpecCheck(false, "Python 3.11 or newer wasn't found, so the spec couldn't be checked.");
         }
 
         var dir = Directory.CreateTempSubdirectory("ms-setup-");

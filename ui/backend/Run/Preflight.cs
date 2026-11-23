@@ -27,7 +27,7 @@ public sealed class Preflight(IProcessRunner runner, PythonLocator python, RepoL
     {
         var checks = new List<PreflightCheck>();
         var py = await python.FindAsync(ct);
-        if (py is null)
+        if (py is null || py.Version < PythonLocator.Minimum)
         {
             checks.Add(new("python", "Python", "fail", "Python 3.11 or newer wasn't found."));
             return new PreflightResult(checks, null, false);
