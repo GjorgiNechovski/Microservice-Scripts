@@ -137,6 +137,9 @@ def main(argv=None) -> int:
     try:
         spec = load_system(args.spec)
     except (OSError, ValueError) as exc:
+        if args.json:
+            # still one JSON object for the setup app, saying what went wrong
+            print(json.dumps({"error": f"could not load spec '{args.spec}': {exc}"}))
         print(f"error: could not load spec '{args.spec}': {exc}", file=sys.stderr)
         return 2
 

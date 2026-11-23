@@ -426,6 +426,8 @@ def _load_problem(spec: dict, spec_path: str) -> str | None:
         load_config(spec, spec_path)
     except (ValueError, OSError) as exc:     # FileNotFoundError is an OSError
         return str(exc)
+    except Exception as exc:                 # load = "k6.js", script = 5: the wrong shape
+        return f"[load] has the wrong shape: {type(exc).__name__}: {exc}"
     return None
 
 

@@ -115,6 +115,11 @@ public sealed class Preflight(IProcessRunner runner, PythonLocator python, RepoL
         {
             using var doc = JsonDocument.Parse(result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "{}");
             var d = doc.RootElement;
+            if (d.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+            {
+                return [new("metrics", "Request metrics", "warn", $"Couldn't check: {error.GetString()}")];
+            }
+
             if (!d.TryGetProperty("request_metric", out var request))
             {
                 return [new("metrics", "Request metrics", "warn", $"Couldn't ask Prometheus: {result.Error}")];

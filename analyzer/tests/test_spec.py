@@ -264,6 +264,10 @@ def test_check_command_reports_valid_and_invalid_specs():
     # valid TOML of the wrong shape: still a verdict, not a traceback
     rc, v = check('name = "x"\nservices = ["s"]\noperations = [1, 2]\n')
     assert rc == 1 and not v["ok"] and v["error"].startswith("AttributeError")
+    # a [load] of the wrong shape: still JSON, with the problem said
+    for load in ('load = "k6.js"\n', '[load]\nscript = 5\nvus = 5\n'):
+        rc, v = check('name = "x"\nservices = ["s"]\n' + load)
+        assert rc == 0 and v["ok"] and v["load_error"].startswith("[load] has the wrong shape"), v
 
 
 def _run_all() -> int:
