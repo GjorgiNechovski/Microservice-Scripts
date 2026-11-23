@@ -17,7 +17,9 @@ type Kept = { version: number; savedAt: number; active: number; state: WizardSta
 
 export function keep(state: WizardState, active: number): void {
   try {
-    const kept: Kept = { version: VERSION, savedAt: Date.now(), active, state: { ...state, secret: '' } };
+    // the secret, and anything left in a login row that is now the secret's
+    const auth = { ...state.auth, fields: state.auth.fields.map((f) => (f.secret ? { ...f, value: '' } : f)) };
+    const kept: Kept = { version: VERSION, savedAt: Date.now(), active, state: { ...state, auth, secret: '' } };
     localStorage.setItem(KEY, JSON.stringify(kept));
   } catch {
     // storage full or blocked: the wizard still works, it just won't survive a reload

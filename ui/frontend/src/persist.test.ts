@@ -15,6 +15,17 @@ describe('keeping the wizard over a reload', () => {
     expect(back?.active).toBe(STEP.project);
   });
 
+  it('keeps nothing typed into the login row that is the secret', () => {
+    const state = filled();
+    const fields = [
+      { key: 'email', value: 'me@example.com', secret: false },
+      { key: 'password', value: 'typed-before-locking', secret: true },
+    ];
+    keep({ ...state, auth: { ...state.auth, kind: 'login', fields } }, 1);
+    expect(localStorage.getItem('microservice-scripts.wizard')).not.toContain('typed-before-locking');
+    expect(restore()?.state.auth.fields.map((f) => f.value)).toEqual(['me@example.com', '']);
+  });
+
   it('has nothing to give back before a folder is chosen, after forgetting, or from something unreadable', () => {
     expect(restore()).toBeNull();
     keep({ ...filled(), folders: [] }, 3);

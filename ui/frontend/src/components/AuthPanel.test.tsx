@@ -67,6 +67,18 @@ describe('the Authorization panel', () => {
     });
   });
 
+  it('makes a value typed in the open the secret when its row is locked, keeping no copy in the row', async () => {
+    let auth: AuthSettings | undefined;
+    let secret = '';
+    render(<Harness onAuth={(a) => (auth = a)} onSecret={(s) => (secret = s)} />);
+    // unlock the password row, type into it in the open, then lock it again
+    await userEvent.click(screen.getByLabelText('password is secret'));
+    await userEvent.type(screen.getByLabelText('value of password'), 'typed-open');
+    await userEvent.click(screen.getByLabelText('make password secret'));
+    expect(secret).toBe('typed-open');
+    expect(auth?.fields.find((f) => f.key === 'password')).toMatchObject({ secret: true, value: '' });
+  });
+
   it('marks the token it found, and takes another value when clicked', async () => {
     let auth: AuthSettings | undefined;
     answer(ok('{"user": {"id": 7, "name": "ana"}, "access_token": "abc.def.ghi"}', { value: 'abc.def.ghi', field: 'access_token' }));

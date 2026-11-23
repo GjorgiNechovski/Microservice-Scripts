@@ -196,6 +196,17 @@ function LoginRequestEditor({ auth, secret, baseUrl, onChange, onSecret }: Edito
         j === i ? { ...f, ...patch } : patch.secret ? { ...f, secret: false } : f,
       ),
     });
+  // a value typed in the open and then locked becomes the secret: the row keeps no hidden copy,
+  // which would otherwise be kept with the rest of the page (persist.ts) while it says "not saved"
+  const toggleSecret = (i: number) => {
+    const f = auth.fields[i];
+    if (f.secret) {
+      setField(i, { secret: false });
+      return;
+    }
+    if (f.value && !secret) onSecret(f.value);
+    setField(i, { secret: true, value: '' });
+  };
 
   return (
     <Stack gap="sm" mt="md">
@@ -308,7 +319,7 @@ function LoginRequestEditor({ auth, secret, baseUrl, onChange, onSecret }: Edito
                         variant={f.secret ? 'light' : 'subtle'}
                         color={f.secret ? 'orange' : 'gray'}
                         aria-label={f.secret ? `${f.key} is secret` : `make ${f.key} secret`}
-                        onClick={() => setField(i, { secret: !f.secret })}
+                        onClick={() => toggleSecret(i)}
                       >
                         {f.secret ? <IconLock size={14} /> : <IconLockOpen size={14} />}
                       </ActionIcon>
