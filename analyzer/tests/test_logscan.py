@@ -174,6 +174,13 @@ def test_the_hidden_limit_diagnosis_names_what_the_logs_say():
     from analyzer.scaling import scaling_explain, scaling_report
     assert "What the logs say" in scaling_report(spec, levels, _TARGET)
     assert "WHAT THE LOGS SAY" in scaling_explain(spec, levels, _TARGET)
+    # scanned, nothing found (a limit that makes requests wait, not fail):
+    # no talk of failures starting
+    for lv in levels:
+        lv.logs = _record(0, 0)
+    dr = diagnose(levels, spec, _TARGET)
+    assert "find where requests wait or fail" in diagnosis_report(dr, spec)
+    assert "doesn't announce itself" in diagnosis_explain(dr, spec)
     # without any scan the diagnosis says where to look, as before
     for lv in levels:
         lv.logs = None

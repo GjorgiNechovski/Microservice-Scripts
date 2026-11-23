@@ -453,7 +453,8 @@ def _hidden_report(dr: DiagnoseResult, spec, scaleout=None) -> list:
             "message ("
             + ("only timeouts or refused connections" if logs.signals
                else "none at all") + "):",
-            "  look for that service's own errors where the failures start"
+            "  find where requests wait or fail once responses degrade (the "
+            "slowest calls, or its own errors)"
             + (f" (not read: {', '.join(logs.unread)})." if logs.unread
                else "."),
         ]
@@ -508,6 +509,13 @@ def _hidden_explain(dr: DiagnoseResult, scaleout=None) -> list:
                 f"    ({s.component}, from {s.first_vus} users on)."]
         out[-2:] = textwrap.wrap(" ".join(p.strip() for p in out[-2:]), 82,
                                  initial_indent="    ", subsequent_indent="    ")
+    elif dr.logs is not None:
+        # scanned, nothing found: it may make requests wait rather than fail
+        out += ["    workers or threads, or a lock. The logs show none of the usual "
+                "\"ran out\"",
+                "    errors, so it doesn't announce itself: look at where requests "
+                "wait once",
+                "    responses slow down."]
     else:
         out += ["    workers or threads, or a lock. The logs of the part that "
                 "starts failing usually",
