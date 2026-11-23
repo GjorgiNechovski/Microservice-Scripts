@@ -183,7 +183,9 @@ public sealed class RouteCatalog
             {
                 if (new FileInfo(file).Length <= MaxFileBytes)
                 {
-                    files.Add((file, File.ReadAllText(file)));
+                    // one kind of line end: a pattern's $ matches before \n only, and a checkout
+                    // on Windows (git's autocrlf) ends every line with \r\n
+                    files.Add((file, File.ReadAllText(file).ReplaceLineEndings("\n")));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

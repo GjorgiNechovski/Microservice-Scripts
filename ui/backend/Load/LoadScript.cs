@@ -378,7 +378,8 @@ public static class K6ScriptWriter
             .AppendLine("    sleep(THINK_TIME * (0.5 + Math.random()));")
             .AppendLine("  }")
             .AppendLine("}");
-        return sb.ToString();
+        // the same file on every system: AppendLine is \r\n on Windows
+        return sb.ToString().ReplaceLineEndings("\n");
     }
 
     private static void WriteLogin(StringBuilder sb, Auth auth, LoginRequest login)

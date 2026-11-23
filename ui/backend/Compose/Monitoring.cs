@@ -127,7 +127,8 @@ public sealed class Monitoring(RepoLocation repo, IProcessRunner runner, HttpCli
             kept.ForEach(e => sb.AppendLine($"{e.Key}={e.Value}"));
         }
 
-        return sb.ToString();
+        // the same file on every system: AppendLine is \r\n on Windows
+        return sb.ToString().ReplaceLineEndings("\n");
     }
 
     /// <summary>The problems with the settings, in words for the user.</summary>

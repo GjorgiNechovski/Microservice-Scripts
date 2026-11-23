@@ -145,7 +145,8 @@ public static class TomlSpecWriter
             }
         }
 
-        return sb.ToString();
+        // the same file on every system: AppendLine is \r\n on Windows
+        return sb.ToString().ReplaceLineEndings("\n");
     }
 
     public static string Key(string key) => BareKey.IsMatch(key) ? key : Str(key);

@@ -25,7 +25,8 @@ public sealed class ResultsTests : IDisposable
         Write($"{folder}/report.txt", $"\nANALYSIS REPORT -- {system}\nmeasurements: x\n", at);
         Write($"{folder}/report-explained.txt", $"PLAIN-LANGUAGE SUMMARY — {system}\n", at);
         Write($"{folder}/validity.txt", "Run validity -- single run: VALID\n", (at ?? now).AddMinutes(-5));
-        return Path.Combine(root.FullName, folder);
+        // as the results are found: with this system's separators (\ on Windows)
+        return Path.Combine(root.FullName, folder.Replace('/', Path.DirectorySeparatorChar));
     }
 
     [Fact]
