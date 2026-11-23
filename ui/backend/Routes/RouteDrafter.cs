@@ -29,7 +29,11 @@ public sealed record DraftRoute(
 /// <param name="Language">The language most of its code is in; null when none was recognised.</param>
 /// <param name="Supported">Routes can be read for that language.</param>
 /// <param name="Routes">How many routes were found.</param>
-public sealed record ServiceCode(string Service, string? Language, bool Supported, int Routes);
+/// <param name="GatewayRules">How many rules were read from its gateway configuration (YARP, say): a
+/// gateway serves its upstreams' routes, not its own.</param>
+/// <param name="Gateway">It looks like a gateway (its image, or a reverse-proxy library it builds with).</param>
+public sealed record ServiceCode(string Service, string? Language, bool Supported, int Routes,
+    int GatewayRules = 0, bool Gateway = false);
 
 /// <param name="Notes">What couldn't be read, for the user.</param>
 /// <param name="Frameworks">The frameworks whose routes can be found.</param>
@@ -47,7 +51,11 @@ public sealed record RouteDraft(
 /// reached from this machine: through which gateways, at which address. It
 /// reads the code and the gateways' configuration; nothing is contacted.
 /// </summary>
-public sealed class RouteDrafter(RouteCatalog catalog, Func<string?, DockerfileFacts?> readDockerfile, RequestShapes? shapes = null)
+public sealed class RouteDrafter(
+    RouteCatalog catalog,
+    Func<string?, DockerfileFacts?> readDockerfile,
+    RequestShapes? shapes = null,
+    ImageCatalog? images = null)
 {
     private const int MaxHops = 6;
 
@@ -57,18 +65,41 @@ public sealed class RouteDrafter(RouteCatalog catalog, Func<string?, DockerfileF
         var all = projects.SelectMany(p => p.Services.Select(s => (Project: p, Service: s))).ToList();
         string IdOf(ComposeProject p, ComposeService s) => $"{p.Name}/{s.Name}";
 
+        bool Modelled(string id) =>
+            components?.Services.GetValueOrDefault(id)?.Kind is not ComponentKind.NotModelled;
+
         // where each gateway sends requests
         var rules = new Dictionary<string, IReadOnlyList<ProxyRule>>();
+        var gateways = new HashSet<string>();
         foreach (var (project, service) in all)
         {
+            var id = IdOf(project, service);
             var baseImage = service.BuiltFromSource ? readDockerfile(service.DockerfilePath)?.BaseImage : null;
             var read = ProxyConfig.Read(project, service, baseImage);
             if (read.Rules.Count > 0)
             {
-                rules[IdOf(project, service)] = read.Rules;
+                rules[id] = read.Rules;
+                gateways.Add(id);
+            }
+            else if (Modelled(id) && LooksLikeGateway(service, baseImage))
+            {
+                gateways.Add(id);
+                notes.Add($"{id}: looks like a gateway, but where it sends requests couldn't be read from its "
+                          + $"configuration (read: {ProxyConfig.ReadableGateways}). Routes through it aren't known, so "
+                          + "the load test would go around it: add its routes with its address, and add it to the "
+                          + "features it carries.");
             }
 
-            notes.AddRange(read.Notes.Select(n => $"{project.Name}/{service.Name}: {n}"));
+            // infrastructure has no routes of its own to miss
+            if (!service.BuiltFromSource && images is not null && images.Match(service.Image) is null
+                && components?.Services.GetValueOrDefault(id)?.Kind is null or ComponentKind.Service or ComponentKind.Unsure)
+            {
+                notes.Add($"{id}: runs the image {service.Image}, which these compose files don't build, so its code "
+                          + "isn't read and none of its routes are listed. Add the compose file or overlay that builds "
+                          + "it, add its routes by hand, or use your own k6 script.");
+            }
+
+            notes.AddRange(read.Notes.Select(n => $"{id}: {n}"));
         }
 
         string? Resolve(string host, ComposeProject from) =>
@@ -153,7 +184,14 @@ public sealed class RouteDrafter(RouteCatalog catalog, Func<string?, DockerfileF
             var nested = contexts.Select(c => c.Context)
                 .Where(c => c != group.Key && c.StartsWith(group.Key + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                 .ToList();
-            var files = catalog.SourceFiles(group.Key, nested);
+            var files = catalog.SourceFiles(group.Key, nested, out var cut);
+            if (cut)
+            {
+                notes.Add($"{string.Join(", ", group.Select(g => g.Service.Name))}: only the first "
+                          + $"{catalog.MaxSourceFiles} source files under {group.Key} were searched, so routes in the "
+                          + "others aren't listed. Add them by hand, or build each service from its own folder.");
+            }
+
             scanned[group.Key] = catalog.Find(files);
             typesOf[group.Key] = TypeIndex.Build(files);
             languageOf[group.Key] = catalog.LanguageOf(group.Key, nested);
@@ -188,7 +226,8 @@ public sealed class RouteDrafter(RouteCatalog catalog, Func<string?, DockerfileF
 
         var code = contexts.Select(c => (Id: IdOf(c.Project, c.Service), c.Context))
             .Select(c => new ServiceCode(c.Id, languageOf[c.Context].Language, languageOf[c.Context].Supported,
-                routes.Count(r => r.Service == c.Id)))
+                routes.Count(r => r.Service == c.Id), rules.GetValueOrDefault(c.Id)?.Count ?? 0,
+                gateways.Contains(c.Id)))
             .ToList();
         return new RouteDraft(
             routes.OrderBy(r => r.Service, StringComparer.Ordinal).ThenBy(r => r.Path, StringComparer.Ordinal)
@@ -197,6 +236,79 @@ public sealed class RouteDrafter(RouteCatalog catalog, Func<string?, DockerfileF
             catalog.FrameworkNames.ToList(),
             code,
             catalog.SupportedLanguages.Order(StringComparer.Ordinal).ToList());
+    }
+
+    /// <summary>
+    /// Whether a service is a gateway: the image catalogue says so (a gateway or
+    /// proxy image, or the base image it is built on), or it is built with a
+    /// reverse-proxy library its manifest names (YARP, Ocelot, Spring Cloud Gateway...:
+    /// the "gateways" of Data/route-patterns.json).
+    /// </summary>
+    private bool LooksLikeGateway(ComposeService service, string? baseImage)
+    {
+        if (images is not null
+            && (images.Match(service.Image) ?? images.Match(baseImage)) is { Category: "gateway" or "proxy" })
+        {
+            return true;
+        }
+
+        return service.BuildContext is { } context && Directory.Exists(context)
+                                                   && Manifests(context, depth: 3).Any(ManifestNamesGatewayLibrary);
+    }
+
+    private bool ManifestNamesGatewayLibrary(string file)
+    {
+        try
+        {
+            if (new FileInfo(file).Length > 1_000_000)
+            {
+                return false;
+            }
+
+            var text = File.ReadAllText(file);
+            return catalog.GatewayLibraries.Any(l => text.Contains(l, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Project manifests (.csproj, package.json, pom.xml, build.gradle...) near the top of a build folder.</summary>
+    private IEnumerable<string> Manifests(string dir, int depth)
+    {
+        List<string> files, subs;
+        try
+        {
+            files = Directory.EnumerateFiles(dir).ToList();
+            subs = depth > 1 ? Directory.EnumerateDirectories(dir).ToList() : [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            yield break;
+        }
+
+        foreach (var f in files)
+        {
+            if (catalog.GatewayManifests?.IsMatch(Path.GetFileName(f)) == true)
+            {
+                yield return f;
+            }
+        }
+
+        foreach (var sub in subs)
+        {
+            var name = Path.GetFileName(sub);
+            if (name.StartsWith('.') || name is "node_modules" or "bin" or "obj" or "build" or "target" or "dist")
+            {
+                continue;
+            }
+
+            foreach (var f in Manifests(sub, depth - 1))
+            {
+                yield return f;
+            }
+        }
     }
 
     /// <summary>The path a request needs outside a gateway to arrive at <paramref name="path"/> inside it.</summary>

@@ -28,7 +28,9 @@
     "the file it is declared in. An import gives 'module' with 'name' (the module or its default export) or 'names'",
     "(a list, 'a as b' / 'a: b' renaming). An export names a file's default 'object'. modules: how a module is found,",
     "'python' (dotted, relative with leading dots) or 'node' (a relative path, extension and index file optional).",
-    "firstParam: the name in a function's first parameter, for function mounts."
+    "firstParam: the name in a function's first parameter, for function mounts.",
+    "gateways: a service built with one of these reverse-proxy 'libraries' (named in a project manifest whose file",
+    "name matches 'manifests') is a gateway; when its configuration can't be read, the Routes step says so."
   ],
   "skipFolders": [
     "node_modules", "bin", "obj", ".git", "venv", ".venv", "env", "__pycache__", "dist", "build", "target",
@@ -88,6 +90,13 @@
     ".go": "^\\s*(?<name>\\w+)",
     ".rs": "^\\s*(?:mut\\s+)?(?<name>\\w+)",
     ".cs": "(?<name>\\w+)\\s*(?:=[^,]*)?$"
+  },
+  "gateways": {
+    "manifests": "(?i)^(?:.+\\.csproj|package\\.json|pom\\.xml|build\\.gradle(?:\\.kts)?)$",
+    "libraries": [
+      "Yarp.ReverseProxy", "Ocelot", "spring-cloud-starter-gateway", "http-proxy-middleware", "@fastify/http-proxy",
+      "express-http-proxy"
+    ]
   },
   "frameworks": [
     {

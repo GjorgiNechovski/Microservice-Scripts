@@ -366,8 +366,14 @@ function RouteRow({ route: r, generated, features, result, onChange }: RowProps)
  */
 function UnreadCode({ state }: { state: WizardState }) {
   const found = state.read?.routes;
+  // a gateway serves its upstreams' routes, not its own: one whose configuration couldn't be read is
+  // named in the notes above, with what to do
   const unread = (found?.code ?? []).filter(
-    (c) => c.routes === 0 && componentOf(c.service, state.components)?.kind === 'service',
+    (c) =>
+      c.routes === 0 &&
+      !(c.gatewayRules ?? 0) &&
+      !c.gateway &&
+      componentOf(c.service, state.components)?.kind === 'service',
   );
   if (!found || unread.length === 0) return null;
   const languages = found.languages ?? [];

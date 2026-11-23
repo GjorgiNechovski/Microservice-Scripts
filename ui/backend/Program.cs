@@ -37,7 +37,8 @@ builder.Services.AddSingleton<SpecChecker>();
 var routeCatalog = RouteCatalog.LoadDefault();
 builder.Services.AddSingleton(_ => new ComponentDrafter(ImageCatalog.LoadDefault(), DockerfileFacts.Read,
     context => routeCatalog.LanguageOf(context).Language));
-builder.Services.AddSingleton(_ => new RouteDrafter(routeCatalog, DockerfileFacts.Read, RequestShapes.LoadDefault()));
+builder.Services.AddSingleton(_ => new RouteDrafter(routeCatalog, DockerfileFacts.Read, RequestShapes.LoadDefault(),
+    ImageCatalog.LoadDefault()));
 // No cookie jar: a session cookie from one login try would otherwise ride along on every later Try,
 // which then passes while the load test (whose users don't share setup()'s cookies) gets 401s.
 builder.Services.AddSingleton(_ => new HttpClient(new SocketsHttpHandler { UseCookies = false })

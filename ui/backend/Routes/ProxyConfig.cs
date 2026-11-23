@@ -25,17 +25,28 @@ public sealed record ProxyRules(IReadOnlyList<ProxyRule> Rules, IReadOnlyList<st
 
 /// <summary>
 /// Reads where gateways send requests: nginx (and openresty) configuration,
-/// Kong declarative configuration and Traefik labels. Only files the compose
-/// file mounts or builds in are read, and nothing is contacted.
+/// Kong declarative configuration, Traefik labels and YARP (the ASP.NET Core
+/// reverse proxy) configuration. Only files the compose file mounts or builds
+/// in are read, and nothing is contacted.
 /// </summary>
 public static class ProxyConfig
 {
+    /// <summary>The gateways whose configuration is read, for messages.</summary>
+    public const string ReadableGateways = "nginx/openresty, Kong, Traefik labels and YARP";
+
     /// <summary>The rules of one compose service, if it is a gateway this can read.</summary>
     public static ProxyRules Read(ComposeProject project, ComposeService service, string? baseImage)
     {
         var image = $"{service.Image} {baseImage}".ToLowerInvariant();
         var rules = new List<ProxyRule>();
         var notes = new List<string>();
+
+        if (service.BuiltFromSource || (service.Mounts ?? []).Any(m => IsAppSettings(m.Target)))
+        {
+            var (r, n) = YarpOf(project, service);
+            rules.AddRange(r);
+            notes.AddRange(n);
+        }
 
         if (image.Contains("nginx") || image.Contains("openresty"))
         {
@@ -508,6 +519,266 @@ public static class ProxyConfig
 
     private static IEnumerable<object> List(Dictionary<object, object> map, string key) =>
         map.TryGetValue(key, out var v) && v is List<object> list ? list : [];
+
+    // --- YARP (appsettings "ReverseProxy") -------------------------------------
+
+    private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bin", "obj", "node_modules", "TestResults", "test", "tests",
+    };
+
+    private static bool IsAppSettings(string path) =>
+        Regex.IsMatch(Path.GetFileName(path), @"^appsettings(\.[\w-]+)?\.json$", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The YARP rules of a service: the ReverseProxy section of the appsettings
+    /// files in its build folder (or mounted into it), layered as ASP.NET Core
+    /// layers them: appsettings.json, then appsettings.{environment}.json (the
+    /// service's ASPNETCORE_ENVIRONMENT, Production when unset), then
+    /// ReverseProxy__* environment variables.
+    /// </summary>
+    private static (List<ProxyRule> Rules, List<string> Notes) YarpOf(ComposeProject project, ComposeService service)
+    {
+        var rules = new List<ProxyRule>();
+        var notes = new List<string>();
+        var environment = service.Environment.GetValueOrDefault("ASPNETCORE_ENVIRONMENT")
+                          ?? service.Environment.GetValueOrDefault("DOTNET_ENVIRONMENT")
+                          ?? "Production";
+        var overrides = service.Environment
+            .Where(e => e.Key.StartsWith("ReverseProxy__", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(e => e.Key.Replace("__", ":"), e => (string?)e.Value);
+
+        var layers = new List<List<string>>();
+        var roots = new[] { service.BuildContext, Path.GetDirectoryName(service.DockerfilePath ?? "") }
+            .Where(d => !string.IsNullOrEmpty(d) && Directory.Exists(d))
+            .Select(d => Path.GetFullPath(d!))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in roots.SelectMany(r => AppSettingsFolders(r, depth: 3)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            layers.Add(new[] { "appsettings.json", $"appsettings.{environment}.json" }
+                .Select(name => FileIn(folder, name)).OfType<string>().ToList());
+        }
+
+        // a file mounted over the image's appsettings: its own layer
+        foreach (var mount in service.Mounts ?? [])
+        {
+            if (IsAppSettings(mount.Target) && File.Exists(mount.Source))
+            {
+                layers.Add([mount.Source]);
+            }
+        }
+
+        foreach (var files in layers.Where(l => l.Count > 0))
+        {
+            var texts = files.Select(f => (Text: SafeRead(f), Source: Relative(project, f))).ToList();
+            if (!texts.Any(t => t.Text.Contains("ReverseProxy", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var (r, n) = Yarp(texts, overrides);
+            rules.AddRange(r);
+            notes.AddRange(n);
+        }
+
+        return (rules, notes);
+    }
+
+    /// <summary>Folders under <paramref name="root"/> holding an appsettings.json, skipping build output and tests.</summary>
+    private static IEnumerable<string> AppSettingsFolders(string root, int depth)
+    {
+        if (FileIn(root, "appsettings.json") is not null)
+        {
+            yield return root;
+        }
+
+        if (depth <= 1)
+        {
+            yield break;
+        }
+
+        IEnumerable<string> subs;
+        try
+        {
+            subs = Directory.EnumerateDirectories(root).Order(StringComparer.Ordinal).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            yield break;
+        }
+
+        foreach (var sub in subs)
+        {
+            var name = Path.GetFileName(sub);
+            if (name.StartsWith('.') || SkippedFolders.Contains(name) || name.EndsWith(".Tests", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var f in AppSettingsFolders(sub, depth - 1))
+            {
+                yield return f;
+            }
+        }
+    }
+
+    /// <summary>A file in a folder by name, whatever its case (appsettings.Production.json); null when absent.</summary>
+    private static string? FileIn(string folder, string name)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(folder)
+                .FirstOrDefault(f => Path.GetFileName(f).Equals(name, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// YARP rules from appsettings files, given in the order ASP.NET Core layers
+    /// them, plus configuration overrides (ReverseProxy:Routes:x:..., as from
+    /// environment variables). Read with ASP.NET Core's own configuration loader,
+    /// so comments, trailing commas and later files overriding earlier keys work
+    /// as in the gateway itself.
+    /// </summary>
+    public static (IReadOnlyList<ProxyRule> Rules, IReadOnlyList<string> Notes) Yarp(
+        IReadOnlyList<(string Text, string Source)> files, IReadOnlyDictionary<string, string?>? overrides = null)
+    {
+        var rules = new List<ProxyRule>();
+        var notes = new List<string>();
+        var builder = new ConfigurationBuilder();
+        var read = new List<string>();
+        foreach (var (text, source) in files)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            try
+            {
+                // each file on its own first, so a broken one is named and left out
+                new ConfigurationBuilder().AddJsonStream(Stream(text)).Build();
+            }
+            catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                notes.Add($"{source}: couldn't be read as JSON configuration.");
+                continue;
+            }
+
+            builder.AddJsonStream(Stream(text));
+            read.Add(source);
+        }
+
+        if (overrides is { Count: > 0 })
+        {
+            builder.AddInMemoryCollection(overrides);
+        }
+
+        var proxy = builder.Build().GetSection("ReverseProxy");
+        if (!proxy.Exists())
+        {
+            return (rules, notes);
+        }
+
+        var from = read.Count > 0 ? string.Join(" + ", read) : "environment variables";
+        var clusters = proxy.GetSection("Clusters").GetChildren().ToDictionary(
+            c => c.Key,
+            c => c.GetSection("Destinations").GetChildren().Select(d => d["Address"])
+                .Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a!).ToList(),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var route in proxy.GetSection("Routes").GetChildren())
+        {
+            var match = route["Match:Path"];
+            if (string.IsNullOrWhiteSpace(match))
+            {
+                notes.Add($"{from}: the route '{route.Key}' matches by host name only, which requests to this machine don't carry; skipped.");
+                continue;
+            }
+
+            if (route["ClusterId"] is not { } clusterId || !clusters.TryGetValue(clusterId, out var destinations)
+                || destinations.Count == 0)
+            {
+                notes.Add($"{from}: the route '{route.Key}' names no cluster with a destination address; skipped.");
+                continue;
+            }
+
+            var (prefix, exact) = TemplatePrefix(match);
+
+            // what the path becomes on the way upstream; null while it is passed on unchanged
+            string? upstream = null;
+            var skipped = false;
+            foreach (var transform in route.GetSection("Transforms").GetChildren())
+            {
+                if (transform["PathPattern"] is { } pattern)
+                {
+                    upstream = TemplatePrefix(pattern).Prefix;
+                }
+                else if (transform["PathRemovePrefix"] is { } remove)
+                {
+                    var current = upstream ?? prefix;
+                    var cut = remove.TrimEnd('/');
+                    upstream = current.StartsWith(cut, StringComparison.OrdinalIgnoreCase)
+                        ? "/" + current[cut.Length..].TrimStart('/')
+                        : current;
+                }
+                else if (transform["PathPrefix"] is { } add)
+                {
+                    upstream = RouteCatalog.Join(add, upstream ?? prefix);
+                }
+                else if (transform["PathSet"] is not null)
+                {
+                    notes.Add($"{from}: the route '{route.Key}' sends every request to one fixed path (PathSet); skipped.");
+                    skipped = true;
+                }
+            }
+
+            if (skipped)
+            {
+                continue;
+            }
+
+            if (upstream is not null && upstream.TrimEnd('/') == prefix.TrimEnd('/'))
+            {
+                upstream = null;
+            }
+
+            foreach (var address in destinations)
+            {
+                var m = Regex.Match(address.Trim(), @"^(?:[a-z][a-z0-9+.-]*://)?(?<host>[^/\s]+)(?<path>/\S*)?$", RegexOptions.IgnoreCase);
+                if (!m.Success)
+                {
+                    notes.Add($"{from}: the destination '{address}' of the route '{route.Key}' couldn't be read.");
+                    continue;
+                }
+
+                // a destination with a path puts it in front of what the route sends on
+                var basePath = m.Groups["path"].Success ? m.Groups["path"].Value.TrimEnd('/') : "";
+                var up = basePath.Length == 0
+                    ? upstream
+                    : RouteCatalog.Join(basePath, upstream ?? prefix);
+                rules.Add(new ProxyRule(prefix, HostOf(m.Groups["host"].Value), up, exact, from));
+            }
+        }
+
+        return (rules, notes);
+    }
+
+    /// <summary>
+    /// The literal start of an ASP.NET route template ("/api/{**catch-all}" is
+    /// "/api/"), and whether the template is all literal, so only that path matches.
+    /// </summary>
+    private static (string Prefix, bool Exact) TemplatePrefix(string template)
+    {
+        var t = "/" + template.Trim().TrimStart('/');
+        var brace = t.IndexOf('{');
+        return brace < 0 ? (t, true) : (t[..brace], false);
+    }
+
+    private static MemoryStream Stream(string text) => new(Encoding.UTF8.GetBytes(text));
 
     // --- Traefik (docker labels) -----------------------------------------------
 

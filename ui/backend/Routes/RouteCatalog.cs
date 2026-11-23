@@ -34,6 +34,9 @@ public sealed record CodeLanguage(string? Language, bool Supported, IReadOnlyDic
 public sealed class RouteCatalog
 {
     private const int MaxFiles = 4000;
+
+    /// <summary>How many source files under one build folder are searched for routes, at most.</summary>
+    public int MaxSourceFiles => MaxFiles;
     private const long MaxFileBytes = 1_000_000;
     private const int MaxBody = 20_000;
     private static readonly string[] Verbs = ["GET", "POST", "PUT", "DELETE", "PATCH"];
@@ -63,6 +66,12 @@ public sealed class RouteCatalog
     }
 
     public IEnumerable<string> FrameworkNames => frameworks.Select(f => f.Name);
+
+    /// <summary>The project manifests (by file name) that say what a service is built with.</summary>
+    public Regex? GatewayManifests { get; private init; }
+
+    /// <summary>Reverse-proxy libraries: a service whose manifest names one is a gateway.</summary>
+    public IReadOnlyList<string> GatewayLibraries { get; private init; } = [];
 
     /// <summary>The languages some framework's routes can be read for.</summary>
     public IReadOnlySet<string> SupportedLanguages =>
@@ -106,7 +115,16 @@ public sealed class RouteCatalog
                 p => p.Key, p => new Regex(p.Value, RegexOptions.Singleline, RegexTimeout), StringComparer.OrdinalIgnoreCase),
             functionDefs,
             RegexTimeout);
-        return new RouteCatalog(frameworks, skipFolders, skipFiles, Map(root, "languages"), functionDefs, modules);
+        var gateways = root.TryGetProperty("gateways", out var g) ? g : default;
+        return new RouteCatalog(frameworks, skipFolders, skipFiles, Map(root, "languages"), functionDefs, modules)
+        {
+            GatewayManifests = gateways.ValueKind == JsonValueKind.Object && gateways.TryGetProperty("manifests", out var m)
+                ? new Regex(m.GetString()!, RegexOptions.None, RegexTimeout)
+                : null,
+            GatewayLibraries = gateways.ValueKind == JsonValueKind.Object && gateways.TryGetProperty("libraries", out var l)
+                ? l.EnumerateArray().Select(x => x.GetString()!).ToList()
+                : [],
+        };
     }
 
     /// <summary>
@@ -137,17 +155,30 @@ public sealed class RouteCatalog
     }
 
     /// <summary>The source files under a folder this reads, with their text; the same skipping rules as the scan.</summary>
-    public IReadOnlyList<(string Path, string Text)> SourceFiles(string root, IReadOnlyCollection<string>? exclude = null)
+    public IReadOnlyList<(string Path, string Text)> SourceFiles(string root, IReadOnlyCollection<string>? exclude = null) =>
+        SourceFiles(root, exclude, out _);
+
+    /// <param name="cut">More files were there than are read (<see cref="MaxSourceFiles"/>): the rest weren't searched.</param>
+    public IReadOnlyList<(string Path, string Text)> SourceFiles(
+        string root, IReadOnlyCollection<string>? exclude, out bool cut)
     {
         var files = new List<(string, string)>();
+        cut = false;
         if (!Directory.Exists(root))
         {
             return files;
         }
 
         var extensions = frameworks.SelectMany(f => f.Extensions).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in Files(root, extensions, exclude ?? []).Take(MaxFiles))
+        var seen = 0;
+        foreach (var file in Files(root, extensions, exclude ?? []).Take(MaxFiles + 1))
         {
+            if (++seen > MaxFiles)
+            {
+                cut = true;
+                break;
+            }
+
             try
             {
                 if (new FileInfo(file).Length <= MaxFileBytes)

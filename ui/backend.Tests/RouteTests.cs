@@ -121,6 +121,73 @@ public class RouteTests
     }
 
     [Fact]
+    public void Yarp_routes_clusters_transforms_and_the_environment_file_on_top()
+    {
+        var (rules, notes) = ProxyConfig.Yarp(
+        [
+            ("""
+             {
+               // comments and trailing commas, as ASP.NET Core allows
+               "ReverseProxy": {
+                 "Routes": {
+                   "api": { "ClusterId": "api", "Match": { "Path": "/api/{**catch-all}" } },
+                   "internal": {
+                     "ClusterId": "match",
+                     "Match": { "Path": "/internal/am-api/{**rest}" },
+                     "Transforms": [ { "PathPattern": "/api/{**rest}" } ],
+                   },
+                   "strip": {
+                     "ClusterId": "api",
+                     "Match": { "Path": "/v1/{**rest}" },
+                     "Transforms": [ { "PathRemovePrefix": "/v1" } ]
+                   },
+                   "health": { "ClusterId": "api", "Match": { "Path": "/health" } },
+                   "hosts": { "ClusterId": "api", "Match": { "Hosts": [ "example.com" ] } }
+                 },
+                 "Clusters": {
+                   "api": { "Destinations": { "d1": { "Address": "http://localhost:5267" } } },
+                   "match": { "Destinations": { "d1": { "Address": "http://localhost:5277" } } }
+                 }
+               }
+             }
+             """, "appsettings.json"),
+            ("""
+             { "ReverseProxy": { "Clusters": {
+                 "api": { "Destinations": { "d1": { "Address": "http://api:8080" } } },
+                 "match": { "Destinations": { "d1": { "Address": "http://match:8080/base/" } } } } } }
+             """, "appsettings.Production.json"),
+        ]);
+
+        const string from = "appsettings.json + appsettings.Production.json";
+        Assert.Contains(new ProxyRule("/api/", "api", null, false, from), rules);
+        Assert.Contains(new ProxyRule("/internal/am-api/", "match", "/base/api", false, from), rules);
+        Assert.Contains(new ProxyRule("/v1/", "api", "/", false, from), rules);
+        Assert.Contains(new ProxyRule("/health", "api", null, true, from), rules);
+        Assert.DoesNotContain(rules, r => r.Host == "localhost");
+        Assert.Contains(notes, n => n.Contains("'hosts'", StringComparison.Ordinal));
+
+        var internalRule = rules.Single(r => r.Prefix == "/internal/am-api/");
+        Assert.Equal("/internal/am-api/games/1", RouteDrafter.External(internalRule, "/base/api/games/1"));
+        Assert.Equal("/v1/books", RouteDrafter.External(rules.Single(r => r.Prefix == "/v1/"), "/books"));
+    }
+
+    [Fact]
+    public void Yarp_environment_variables_override_the_files_and_broken_json_is_named()
+    {
+        var (rules, notes) = ProxyConfig.Yarp(
+        [
+            ("""
+             { "ReverseProxy": { "Routes": { "r": { "ClusterId": "c", "Match": { "Path": "/x/{**p}" } } },
+               "Clusters": { "c": { "Destinations": { "d": { "Address": "http://old:80" } } } } } }
+             """, "appsettings.json"),
+            ("{ not json", "appsettings.Development.json"),
+        ], new Dictionary<string, string?> { ["ReverseProxy:Clusters:c:Destinations:d:Address"] = "http://new:8080" });
+
+        Assert.Equal([new ProxyRule("/x/", "new", null, false, "appsettings.json")], rules);
+        Assert.Contains(notes, n => n.StartsWith("appsettings.Development.json", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Traefik_labels_with_a_strip_prefix_middleware()
     {
         var project = ComposeProject.Parse("""

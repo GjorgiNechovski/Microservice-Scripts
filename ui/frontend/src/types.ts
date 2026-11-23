@@ -122,7 +122,16 @@ export type RequestShape = {
 };
 
 /** How much of a service's code could be read: its language, and how many routes were found. */
-export type ServiceCode = { service: string; language: string | null; supported: boolean; routes: number };
+export type ServiceCode = {
+  service: string;
+  language: string | null;
+  supported: boolean;
+  routes: number;
+  /** Rules read from its gateway configuration (YARP, say): it serves its upstreams' routes. */
+  gatewayRules?: number;
+  /** It looks like a gateway (its image, or a reverse-proxy library it is built with). */
+  gateway?: boolean;
+};
 
 export type RouteDraft = {
   routes: DraftRoute[];

@@ -187,8 +187,20 @@ paths on the Routes step. How a route is reached from
 outside is read from the gateways' own configuration: nginx and openresty files
 the compose file mounts or builds in (`location`, `proxy_pass`, `upstream`,
 `set` variables), Kong's declarative configuration (`strip_path`, service paths,
-upstreams), and Traefik labels (`PathPrefix`, `stripprefix`). Regular-expression
-locations and routes are skipped and said so. A route no published port leads
+upstreams), Traefik labels (`PathPrefix`, `stripprefix`), and YARP, the ASP.NET
+Core reverse proxy (the `ReverseProxy` section of the gateway's appsettings,
+layered as ASP.NET Core layers it: `appsettings.json`, then
+`appsettings.{ASPNETCORE_ENVIRONMENT}.json`, Production when unset, then
+`ReverseProxy__*` environment variables; routes' `Match.Path`, clusters'
+destinations, and the `PathPattern`, `PathRemovePrefix` and `PathPrefix`
+transforms). Regular-expression locations and routes, and routes matched only by
+host name, are skipped and said so. A service that looks like a gateway (its
+image, or a reverse-proxy library its project's manifest names: YARP, Ocelot,
+Spring Cloud Gateway..., listed in `backend/Data/route-patterns.json`) whose
+configuration can't be read is named, since the load test would otherwise go
+around it. So is a service (not infrastructure) that runs an image these compose
+files don't build: its code isn't read. Only the first 4,000 source files under
+one build folder are searched, and a cut is said. A route no published port leads
 to is listed with its path inside the service, for you to give its full address.
 
 Each route starts with an example request, as Swagger shows one: the handler's
