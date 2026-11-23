@@ -154,8 +154,13 @@ export function verdictTone(verdict: string): { color: string; text: string } {
   if (verdict.startsWith('OVERLOADED')) {
     return { color: 'orange', text: "The test worked, and the app couldn't keep up with this load: that is the result." };
   }
-  if (verdict.includes('warning')) return { color: 'yellow', text: 'Usable, with the caveats below.' };
-  return { color: 'teal', text: 'The test ran as planned: these numbers can be used.' };
+  if (verdict.startsWith('VALID')) {
+    return verdict.includes('warning')
+      ? { color: 'yellow', text: 'Usable, with the caveats below.' }
+      : { color: 'teal', text: 'The test ran as planned: these numbers can be used.' };
+  }
+  // a verdict this page doesn't know (a newer analyzer): never shown as good
+  return { color: 'gray', text: "This page doesn't know this verdict: read the checks below before using the numbers." };
 }
 
 export type ChartInfo = {

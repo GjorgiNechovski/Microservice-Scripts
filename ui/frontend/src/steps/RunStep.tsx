@@ -51,6 +51,8 @@ const ACTIVE: RunState[] = ['running', 'stopping'];
 function useRun(onRunState: (state: RunState) => void) {
   const [status, setStatus] = useState<RunStatus | null>(null);
   const [lines, setLines] = useState<RunLine[]>([]);
+  // the setup app stopped answering: what is shown is how the run stood when it last did
+  const [lost, setLost] = useState(false);
   const next = useRef(0);
   const startedAt = useRef<string | null>(null);
 
@@ -73,11 +75,17 @@ function useRun(onRunState: (state: RunState) => void) {
   useEffect(() => {
     let stop = false;
     let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const loop = async () => {
       try {
         const s = await poll();
+        failures = 0;
+        setLost(false);
         if (!stop) timer = setTimeout(loop, ACTIVE.includes(s.state) ? 1000 : 5000);
       } catch {
+        // one missed answer can be a blip; two in a row is said
+        failures += 1;
+        if (failures >= 2) setLost(true);
         if (!stop) timer = setTimeout(loop, 3000);
       }
     };
@@ -88,7 +96,7 @@ function useRun(onRunState: (state: RunState) => void) {
     };
   }, [poll]);
 
-  return { status, lines, poll };
+  return { status, lines, poll, lost };
 }
 
 export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
@@ -101,7 +109,7 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
   const [startError, setStartError] = useState<string | null>(null);
   const [appReady, setAppReady] = useState<boolean | null>(null);
   const [monitoringReady, setMonitoringReady] = useState<boolean | null>(null);
-  const { status, lines, poll } = useRun(onRunState);
+  const { status, lines, poll, lost } = useRun(onRunState);
   const specPath = state.savedPath;
   const generated = state.load.script === 'generate';
   // a sweep measures recovery once, before its load levels; a single run after its load test
@@ -151,8 +159,12 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
   };
   const stop = async () => {
     setConfirmStop(false);
-    await api.stop();
-    await poll();
+    try {
+      await api.stop();
+      await poll();
+    } catch (e) {
+      setStartError(`Couldn't stop the run: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const stopButton = active && (
@@ -320,6 +332,13 @@ export function RunStep({ state, setState, onRunState, onShowResults }: Props) {
         </Text>
       </Group>
       {startError && <Alert color="red">{startError}</Alert>}
+      {lost && active && (
+        <Alert color="orange" title="The setup app isn't answering" data-lost-contact>
+          What you see is how the run stood when the app last answered. If the app was stopped, the analyzer
+          stopped with it and put back anything it had stopped. Start the app again (start.sh or start.ps1) and
+          reload this page to see where it is.
+        </Alert>
+      )}
 
       {output}
 

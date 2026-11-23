@@ -114,7 +114,14 @@ describe('the trust check', () => {
     expect(verdictTone(v.verdict).color).toBe('red');
     expect(verdictTone('VALID, with warnings').color).toBe('yellow');
     expect(verdictTone('OVERLOADED').color).toBe('orange');
+    expect(verdictTone('VALID').color).toBe('teal');
     expect(parseValidity('something else')).toBeNull();
+  });
+
+  it("never shows a verdict it doesn't know as good", () => {
+    // a newer analyzer's verdict: neutral, not "these numbers can be used"
+    expect(verdictTone('INCONCLUSIVE').color).toBe('gray');
+    expect(verdictTone('').color).toBe('gray');
   });
 });
 

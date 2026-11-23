@@ -76,17 +76,33 @@ function messageOf(status: number, body: unknown): string {
   return `The app answered ${status}.`;
 }
 
+/** What the page says when the setup app doesn't answer at all (status 0). */
+export const UNREACHABLE =
+  "The setup app isn't answering: it may have been stopped. Start it again (start.sh or start.ps1) and reload this page.";
+
 async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    method,
-    headers: {
-      'X-Setup-Token': token,
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      method,
+      headers: {
+        'X-Setup-Token': token,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // the browser's own "Failed to fetch" says nothing about what to do
+    throw new ApiError(UNREACHABLE, 0, null);
+  }
   const text = await response.text();
-  const data: unknown = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // not JSON (a proxy's error page, a plain-text 500): the status says more than a parse error
+    if (response.ok) throw new ApiError(`The app answered with something that isn't JSON.`, response.status, text);
+  }
   if (!response.ok) {
     throw new ApiError(messageOf(response.status, data), response.status, data);
   }

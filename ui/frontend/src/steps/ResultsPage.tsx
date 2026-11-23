@@ -361,7 +361,9 @@ function Trust({ part }: { part: ResultPart }) {
   if (!validity) {
     return (
       <Alert color="gray" title="Can these numbers be trusted?">
-        This run has no trust check: it didn't run the load test (or ran before the analyzer had one).
+        This run has no trust check (validity.txt), so don't rely on its numbers yet. Either it didn't run the load
+        test, its measurements couldn't be read (Prometheus wasn't reachable), or it ran before the analyzer had
+        one. Its output says which.
       </Alert>
     );
   }
